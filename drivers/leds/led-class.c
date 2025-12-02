@@ -22,6 +22,8 @@
 #include <linux/of.h>
 #include "leds.h"
 
+static DEFINE_MUTEX(leds_lookup_lock);
+static LIST_HEAD(leds_lookup_list);
 static struct class *leds_class;
 
 static ssize_t brightness_show(struct device *dev,
@@ -257,6 +259,33 @@ struct led_classdev *of_led_get(struct device_node *np, int index)
 	return led_cdev;
 }
 EXPORT_SYMBOL_GPL(of_led_get);
+
+/**
+ * led_add_lookup() - Add a LED lookup table entry
+ * @led_lookup: the lookup table entry to add
+ *
+ * Add a LED lookup table entry. On systems without devicetree the lookup table
+ * is used by led_get() to find LEDs.
+ */
+void led_add_lookup(struct led_lookup_data *led_lookup)
+{
+	mutex_lock(&leds_lookup_lock);
+	list_add_tail(&led_lookup->list, &leds_lookup_list);
+	mutex_unlock(&leds_lookup_lock);
+}
+EXPORT_SYMBOL_GPL(led_add_lookup);
+
+/**
+ * led_remove_lookup() - Remove a LED lookup table entry
+ * @led_lookup: the lookup table entry to remove
+ */
+void led_remove_lookup(struct led_lookup_data *led_lookup)
+{
+	mutex_lock(&leds_lookup_lock);
+	list_del(&led_lookup->list);
+	mutex_unlock(&leds_lookup_lock);
+}
+EXPORT_SYMBOL_GPL(led_remove_lookup);
 
 /**
  * led_put() - release a LED device
