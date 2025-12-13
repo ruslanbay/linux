@@ -153,9 +153,17 @@ enum v4l2_buf_type {
 	V4L2_BUF_TYPE_SDR_OUTPUT           = 12,
 	V4L2_BUF_TYPE_META_CAPTURE         = 13,
 	V4L2_BUF_TYPE_META_OUTPUT	   = 14,
+	/*
+	 * Note: V4L2_TYPE_IS_VALID and V4L2_TYPE_IS_OUTPUT must
+	 * be updated if a new type is added.
+	 */
 	/* Deprecated, do not use */
 	V4L2_BUF_TYPE_PRIVATE              = 0x80,
 };
+
+#define V4L2_TYPE_IS_VALID(type)		 \
+	((type) >= V4L2_BUF_TYPE_VIDEO_CAPTURE &&\
+	 (type) <= V4L2_BUF_TYPE_META_OUTPUT)
 
 #define V4L2_TYPE_IS_MULTIPLANAR(type)			\
 	((type) == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE	\
@@ -171,7 +179,7 @@ enum v4l2_buf_type {
 	 || (type) == V4L2_BUF_TYPE_SDR_OUTPUT			\
 	 || (type) == V4L2_BUF_TYPE_META_OUTPUT)
 
-#define V4L2_TYPE_IS_CAPTURE(type) (!V4L2_TYPE_IS_OUTPUT(type))
+#define V4L2_TYPE_IS_CAPTURE(type) (V4L2_TYPE_IS_VALID(type) && !V4L2_TYPE_IS_OUTPUT(type))
 
 enum v4l2_tuner_type {
 	V4L2_TUNER_RADIO	     = 1,
@@ -617,6 +625,7 @@ struct v4l2_pix_format {
 #define V4L2_PIX_FMT_YUVA32  v4l2_fourcc('Y', 'U', 'V', 'A') /* 32  YUVA-8-8-8-8  */
 #define V4L2_PIX_FMT_YUVX32  v4l2_fourcc('Y', 'U', 'V', 'X') /* 32  YUVX-8-8-8-8  */
 #define V4L2_PIX_FMT_M420    v4l2_fourcc('M', '4', '2', '0') /* 12  YUV 4:2:0 2 lines y, 1 line uv interleaved */
+#define V4L2_PIX_FMT_Y210    v4l2_fourcc('Y', '2', '1', '0') /* 20  YUV 4:2:2 10-bit yuyv*/
 
 /* two planes -- one Y, one Cr + Cb interleaved  */
 #define V4L2_PIX_FMT_NV12    v4l2_fourcc('N', 'V', '1', '2') /* 12  Y/CbCr 4:2:0  */
@@ -707,6 +716,44 @@ struct v4l2_pix_format {
 #define V4L2_PIX_FMT_SGBRG16 v4l2_fourcc('G', 'B', '1', '6') /* 16  GBGB.. RGRG.. */
 #define V4L2_PIX_FMT_SGRBG16 v4l2_fourcc('G', 'R', '1', '6') /* 16  GRGR.. BGBG.. */
 #define V4L2_PIX_FMT_SRGGB16 v4l2_fourcc('R', 'G', '1', '6') /* 16  RGRG.. GBGB.. */
+
+/* Raw bayer vector formats. */
+#define V4L2_PIX_FMT_SBGGR8_16V32	v4l2_fourcc('b', 'V', '0', 'A')
+#define V4L2_PIX_FMT_SGBRG8_16V32	v4l2_fourcc('b', 'V', '0', 'B')
+#define V4L2_PIX_FMT_SGRBG8_16V32	v4l2_fourcc('b', 'V', '0', 'C')
+#define V4L2_PIX_FMT_SRGGB8_16V32	v4l2_fourcc('b', 'V', '0', 'D')
+#define V4L2_PIX_FMT_SBGGR8V32	v4l2_fourcc('b', 'V', '0', 'A')
+#define V4L2_PIX_FMT_SGBRG8V32	v4l2_fourcc('b', 'V', '0', 'B')
+#define V4L2_PIX_FMT_SGRBG8V32	v4l2_fourcc('b', 'V', '0', 'C')
+#define V4L2_PIX_FMT_SRGGB8V32	v4l2_fourcc('b', 'V', '0', 'D')
+#define V4L2_PIX_FMT_SBGGR10V32	v4l2_fourcc('b', 'V', '0', 'E')
+#define V4L2_PIX_FMT_SGBRG10V32	v4l2_fourcc('b', 'V', '0', 'F')
+#define V4L2_PIX_FMT_SGRBG10V32	v4l2_fourcc('b', 'V', '0', 'G')
+#define V4L2_PIX_FMT_SRGGB10V32	v4l2_fourcc('b', 'V', '0', 'H')
+#define V4L2_PIX_FMT_SBGGR12V32	v4l2_fourcc('b', 'V', '0', 'I')
+#define V4L2_PIX_FMT_SGBRG12V32	v4l2_fourcc('b', 'V', '0', 'J')
+#define V4L2_PIX_FMT_SGRBG12V32	v4l2_fourcc('b', 'V', '0', 'K')
+#define V4L2_PIX_FMT_SRGGB12V32	v4l2_fourcc('b', 'V', '0', 'L')
+
+#ifndef V4L2_PIX_FMT_SBGGR14V32
+/*
+ * Non-vectorized 14bit definitions have been upstreamed.
+ * To keep various versions of the ipu4 builds compileable use local
+ * definitions when global one's doesn't exists.
+ */
+#define V4L2_PIX_FMT_SBGGR14V32	v4l2_fourcc('b', 'V', '0', 'M')
+#define V4L2_PIX_FMT_SGBRG14V32	v4l2_fourcc('b', 'V', '0', 'N')
+#define V4L2_PIX_FMT_SGRBG14V32	v4l2_fourcc('b', 'V', '0', 'O')
+#define V4L2_PIX_FMT_SRGGB14V32	v4l2_fourcc('b', 'V', '0', 'P')
+#endif
+
+/* IPU4 */
+#define V4L2_FMT_IPU_ISA_CFG	v4l2_fourcc('i', 'p', '4', 'c')
+#define V4L2_FMT_IPU_ISYS_META	v4l2_fourcc('i', 'p', '4', 'm')
+
+/* YUV vector formats. */
+#define V4L2_PIX_FMT_UYVY_V32          v4l2_fourcc('y', 'V', '3', '2')
+#define V4L2_PIX_FMT_YUYV420_V32       v4l2_fourcc('y', '0', '3', '2')
 
 /* HSV formats */
 #define V4L2_PIX_FMT_HSV24 v4l2_fourcc('H', 'S', 'V', '3')

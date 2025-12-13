@@ -341,9 +341,14 @@ enum v4l2_mbus_frame_desc_flags {
 /**
  * struct v4l2_mbus_frame_desc_entry - media bus frame description structure
  *
- * @flags:	bitmask flags, as defined by &enum v4l2_mbus_frame_desc_flags.
+ * @flags: V4L2_MBUS_FRAME_DESC_FL_* flags, as defined by &enum v4l2_mbus_frame_desc_flags
+ * @bpp: bits per pixel
  * @pixelcode:	media bus pixel code, valid if @flags
  *		%FRAME_DESC_FL_BLOB is not set.
+ * @start_line: start line of the data for 2D DMA
+ * @start_pixel: start pixel of the data for 2D DMA
+ * @width: image width for 2D DMA
+ * @height: image height for 2D DMA
  * @length:	number of octets per frame, valid if @flags
  *		%V4L2_MBUS_FRAME_DESC_FL_LEN_MAX is set.
  * @bus:	Bus-specific frame descriptor parameters
@@ -351,8 +356,17 @@ enum v4l2_mbus_frame_desc_flags {
  */
 struct v4l2_mbus_frame_desc_entry {
 	enum v4l2_mbus_frame_desc_flags flags;
+	u8 bpp;
 	u32 pixelcode;
-	u32 length;
+	union {
+		struct {
+			u16 start_line;
+			u16 start_pixel;
+			u16 width;
+			u16 height;
+		} two_dim;
+		u32 length;
+	};
 	union {
 		struct v4l2_mbus_frame_desc_entry_csi2 csi2;
 	} bus;
@@ -378,7 +392,9 @@ struct v4l2_mbus_frame_desc_entry {
  */
 enum v4l2_mbus_frame_desc_type {
 	V4L2_MBUS_FRAME_DESC_TYPE_UNDEFINED = 0,
+	V4L2_MBUS_FRAME_DESC_TYPE_PLATFORM,
 	V4L2_MBUS_FRAME_DESC_TYPE_PARALLEL,
+	V4L2_MBUS_FRAME_DESC_TYPE_CCP2,
 	V4L2_MBUS_FRAME_DESC_TYPE_CSI2,
 };
 
@@ -762,7 +778,20 @@ struct v4l2_subdev_state {
  *		     possible configuration from the remote end, likely calling
  *		     this operation as close as possible to stream on time. The
  *		     operation shall fail if the pad index it has been called on
- *		     is not valid or in case of unrecoverable failures.
+ *		     is not valid or in case of unrecoverable failures. The
+ *		     config argument has been memset to 0 just before calling
+ *		     the op.
+ *
+ * @set_mbus_config: set the media bus configuration of a remote sub-device.
+ *		     This operations is intended to allow, in combination with
+ *		     the get_mbus_config operation, the negotiation of media bus
+ *		     configuration parameters between media sub-devices. The
+ *		     operation shall not fail if the requested configuration is
+ *		     not supported, but the driver shall update the content of
+ *		     the %config argument to reflect what has been actually
+ *		     applied to the hardware. The operation shall fail if the
+ *		     pad index it has been called on is not valid or in case of
+ *		     unrecoverable failures.
  */
 struct v4l2_subdev_pad_ops {
 	int (*init_cfg)(struct v4l2_subdev *sd,
@@ -803,7 +832,13 @@ struct v4l2_subdev_pad_ops {
 			      struct v4l2_mbus_frame_desc *fd);
 	int (*set_frame_desc)(struct v4l2_subdev *sd, unsigned int pad,
 			      struct v4l2_mbus_frame_desc *fd);
+	int (*get_routing)(struct v4l2_subdev *sd,
+			   struct v4l2_subdev_routing *route);
+	int (*set_routing)(struct v4l2_subdev *sd,
+			   struct v4l2_subdev_routing *route);
 	int (*get_mbus_config)(struct v4l2_subdev *sd, unsigned int pad,
+			       struct v4l2_mbus_config *config);
+	int (*set_mbus_config)(struct v4l2_subdev *sd, unsigned int pad,
 			       struct v4l2_mbus_config *config);
 };
 
@@ -879,6 +914,8 @@ struct v4l2_subdev_internal_ops {
  * should set this flag.
  */
 #define V4L2_SUBDEV_FL_HAS_EVENTS		(1U << 3)
+/* Set this flag if this sub-device supports substreams. */
+#define V4L2_SUBDEV_FL_HAS_SUBSTREAMS		(1U << 4)
 
 struct regulator_bulk_data;
 
