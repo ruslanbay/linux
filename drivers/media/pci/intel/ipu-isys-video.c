@@ -720,7 +720,6 @@ static int vidioc_s_input(struct file *file, void *fh, unsigned int input)
 static bool is_external(struct ipu_isys_video *av, struct media_entity *entity)
 {
 	struct v4l2_subdev *sd;
-	unsigned int i;
 
 	/* All video nodes are ours. */
 	if (!is_media_entity_v4l2_subdev(entity))
@@ -731,63 +730,25 @@ static bool is_external(struct ipu_isys_video *av, struct media_entity *entity)
 		strlen(IPU_ISYS_ENTITY_PREFIX)) != 0)
 		return true;
 
-	for (i = 0; i < av->isys->pdata->ipdata->tpg.ntpgs &&
-	     av->isys->tpg[i].isys; i++)
-		if (entity == &av->isys->tpg[i].asd.sd.entity)
-			return true;
-
 	return false;
 }
 
 static int link_validate(struct media_link *link)
 {
 	struct ipu_isys_video *av =
-	    container_of(link->sink, struct ipu_isys_video, pad);
-	/* All sub-devices connected to a video node are ours. */
-	struct ipu_isys_pipeline *ip =
-		to_ipu_isys_pipeline(media_entity_pipeline(&av->vdev.entity));
-	struct v4l2_subdev_route r[IPU_ISYS_MAX_STREAMS];
-	struct v4l2_subdev_routing routing = {
-		.routes = r,
-		.num_routes = IPU_ISYS_MAX_STREAMS,
-	};
-	int i, rval, active = 0;
+		container_of(link->sink, struct ipu_isys_video, pad);
+	struct ipu_isys_pipeline *ip = &av->ip;
 	struct v4l2_subdev *sd;
 
 	if (!link->source->entity)
 		return -EINVAL;
+
 	sd = media_entity_to_v4l2_subdev(link->source->entity);
 	if (is_external(av, link->source->entity)) {
 		ip->external = media_pad_remote_pad_first(av->vdev.entity.pads);
 		ip->source = to_ipu_isys_subdev(sd)->source;
 	}
 
-	rval = v4l2_subdev_call(sd, pad, get_routing, &routing);
-	if (rval)
-		goto err_subdev;
-
-	for (i = 0; i < routing.num_routes; i++) {
-		if (!(routing.routes[i].flags & V4L2_SUBDEV_ROUTE_FL_ACTIVE))
-			continue;
-
-		if (routing.routes[i].source_pad == link->source->index)
-			ip->stream_id = routing.routes[i].sink_stream;
-
-		active++;
-	}
-
-	if (ip->external) {
-		struct v4l2_mbus_frame_desc desc = {
-			.num_entries = V4L2_FRAME_DESC_ENTRY_MAX,
-		};
-
-		sd = media_entity_to_v4l2_subdev(ip->external->entity);
-		rval = ipu_isys_subdev_get_frame_desc(sd, &desc);
-		if (!rval && ip->stream_id < desc.num_entries)
-			ip->vc = desc.entry[ip->stream_id].bus.csi2.vc;
-	}
-
-err_subdev:
 	ip->nr_queues++;
 
 	return 0;
