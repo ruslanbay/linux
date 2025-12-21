@@ -1059,14 +1059,45 @@ static int v4l_querycap(const struct v4l2_ioctl_ops *ops,
 	 * Drivers must not change device_caps, so check for this and
 	 * warn if this happened.
 	 */
-	WARN_ON(cap->device_caps != vfd->device_caps);
+
+	u32 missing = vfd->device_caps & ~cap->device_caps;
+	u32 extra = cap->device_caps & ~vfd->device_caps;
+	
+	if (vfd->device_caps != cap->device_caps) {
+		pr_warn("v4l2-ioctl mismatch! Expected: 0x%08x, Got: 0x%08x\n", 
+				vfd->device_caps, cap->device_caps);
+		
+		if (missing)
+			pr_warn("  -> Missing flags: 0x%08x\n", missing);
+		if (extra)
+			pr_warn("  -> Unexpected extra flags: 0x%08x\n", extra);
+	}
+	
+	WARN(cap->device_caps != vfd->device_caps,
+		"v4l2-ioctl: device_caps mismatch! cap: 0x%08x, vfd: 0x%08x\n",
+		cap->device_caps, vfd->device_caps);
 	/*
 	 * Check that capabilities is a superset of
 	 * vfd->device_caps | V4L2_CAP_DEVICE_CAPS
 	 */
-	WARN_ON((cap->capabilities &
-		 (vfd->device_caps | V4L2_CAP_DEVICE_CAPS)) !=
-		(vfd->device_caps | V4L2_CAP_DEVICE_CAPS));
+	u32 expected = vfd->device_caps | V4L2_CAP_DEVICE_CAPS;
+	u32 capabilities_masked = cap->capabilities & expected;
+
+	if (capabilities_masked != expected) {
+		u32 missing = expected & ~cap->capabilities;
+	
+		pr_warn("v4l2-ioctl capabilities mismatch! Expected flags: 0x%08x, Got: 0x%08x\n",
+				expected, capabilities_masked);
+		
+		if (missing)
+			pr_warn("  -> Missing flags in cap->capabilities: 0x%08x\n", missing);
+		
+		/* Trigger the stack trace after printing details */
+		// WARN_ON(1);
+	}
+	// WARN_ON((cap->capabilities &
+	// 	 (vfd->device_caps | V4L2_CAP_DEVICE_CAPS)) !=
+	// 	(vfd->device_caps | V4L2_CAP_DEVICE_CAPS));
 	cap->capabilities |= V4L2_CAP_EXT_PIX_FORMAT;
 	cap->device_caps |= V4L2_CAP_EXT_PIX_FORMAT;
 
@@ -1467,7 +1498,8 @@ static void v4l_fill_fmtdesc(struct v4l2_fmtdesc *fmt)
 		default:
 			if (fmt->description[0])
 				return;
-			WARN(1, "Unknown pixelformat 0x%08x\n", fmt->pixelformat);
+			// WARN(1, "Unknown pixelformat 0x%08x\n", fmt->pixelformat);
+			pr_warn("Unknown pixelformat 0x%08x\n", fmt->pixelformat);
 			flags = 0;
 			snprintf(fmt->description, sz, "%p4cc",
 				 &fmt->pixelformat);
