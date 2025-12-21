@@ -154,8 +154,8 @@ static int isys_register_ext_subdev(struct ipu_isys *isys,
 			 sd_info->csi2->port);
 		if (sd_info->csi2->port >= isys->pdata->ipdata->csi2.nports ||
 		    !isys->csi2[sd_info->csi2->port].isys) {
-			dev_warn(&isys->adev->dev, "invalid csi2 port %u\n",
-				 sd_info->csi2->port);
+			dev_warn(&isys->adev->dev, "isys_register_ext_subdev, %s: invalid csi2 port %u\n",
+				 sd_info->acpiname, sd_info->csi2->port);
 			rval = -EINVAL;
 			goto skip_put_adapter;
 		}
@@ -246,7 +246,7 @@ static int isys_register_subdevices(struct ipu_isys *isys)
 				i = (*sd_info)->csi2->port;
 				if (i >= csi2->nports) {
 					dev_warn(&isys->adev->dev,
-						 "invalid csi2 port %u\n", i);
+						 "isys_register_subdevices, %s: invalid csi2 port %u\n", (*sd_info)->acpiname, i);
 					continue;
 				}
 				bitmap_set(csi2_enable, i, 1);
@@ -407,8 +407,8 @@ static int isys_notifier_bound(struct v4l2_async_notifier *notifier,
 	int ret;
 
 	if (s_asd->csi2.port >= isys->pdata->ipdata->csi2.nports) {
-		dev_err(&isys->adev->dev, "invalid csi2 port %u\n",
-			s_asd->csi2.port);
+		dev_err(&isys->adev->dev, "isys_notifier_bound: s_asd->csi2.port >= isys->pdata->ipdata->csi2.nports\n  s_asd->csi2.port = %u\n  isys->pdata->ipdata->csi2.nports = %u\n",
+			s_asd->csi2.port, isys->pdata->ipdata->csi2.nports);
 		return -EINVAL;
 	}
 
