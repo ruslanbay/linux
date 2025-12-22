@@ -729,7 +729,6 @@ out_pci_register_driver:
 
 static void __exit ipu_exit(void)
 {
-	ipu_bus_unregister_driver(&ipu_mmu_driver);
 	pci_unregister_driver(&ipu_pci_driver);
 	ipu_bus_unregister();
 }

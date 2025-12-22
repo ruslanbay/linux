@@ -171,8 +171,7 @@ static void tpg_set_ffmt(struct v4l2_subdev *sd,
 			 struct v4l2_subdev_format *fmt)
 {
 	fmt->format.field = V4L2_FIELD_NONE;
-	*__ipu_isys_get_ffmt(sd, cfg, fmt->pad, fmt->stream,
-			     fmt->which) = fmt->format;
+	*__ipu_isys_get_ffmt(sd, cfg, fmt->pad, fmt->which) = fmt->format;
 }
 
 static int ipu_isys_tpg_set_ffmt(struct v4l2_subdev *sd,

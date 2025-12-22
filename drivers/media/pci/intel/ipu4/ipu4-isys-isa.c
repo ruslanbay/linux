@@ -244,12 +244,7 @@ static void isa_set_ffmt(struct v4l2_subdev *sd,
 			 struct v4l2_subdev_format *fmt)
 {
 	struct v4l2_mbus_framefmt *ffmt =
-#ifdef IPU_VC_SUPPORT
-		__ipu_isys_get_ffmt(sd, cfg, fmt->pad, fmt->stream,
-					   fmt->which);
-#else
 		__ipu_isys_get_ffmt(sd, cfg, fmt->pad, fmt->which);
-#endif
 	enum ipu_isys_subdev_pixelorder order;
 	enum isys_subdev_prop_tgt tgt;
 
@@ -263,12 +258,7 @@ static void isa_set_ffmt(struct v4l2_subdev *sd,
 		return;
 	case ISA_PAD_SOURCE: {
 		struct v4l2_mbus_framefmt *sink_ffmt =
-#ifdef IPU_VC_SUPPORT
-			__ipu_isys_get_ffmt(sd, cfg, ISA_PAD_SINK,
-						   fmt->stream, fmt->which);
-#else
 			__ipu_isys_get_ffmt(sd, cfg, ISA_PAD_SINK, fmt->which);
-#endif
 		struct v4l2_rect *r =
 			__ipu_isys_get_selection(sd, cfg,
 							V4L2_SEL_TGT_CROP,
@@ -291,12 +281,8 @@ static void isa_set_ffmt(struct v4l2_subdev *sd,
 		return;
 	case ISA_PAD_SOURCE_SCALED: {
 		struct v4l2_mbus_framefmt *sink_ffmt =
-#ifdef IPU_VC_SUPPORT
 			__ipu_isys_get_ffmt(sd, cfg, ISA_PAD_SINK,
-						   fmt->stream, fmt->which);
-#else
-			__ipu_isys_get_ffmt(sd, cfg, ISA_PAD_SINK, fmt->which);
-#endif
+						   fmt->which);
 		struct v4l2_rect *r =
 			__ipu_isys_get_selection(sd, cfg,
 							V4L2_SEL_TGT_CROP,

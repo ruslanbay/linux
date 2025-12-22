@@ -68,7 +68,6 @@ struct ipu_isys_pipeline {
 	struct media_pipeline pipe;
 	struct media_pad *external;
 	atomic_t sequence;
-	int last_sequence;
 	unsigned int seq_index;
 	struct sequence_info seq[IPU_ISYS_MAX_PARALLEL_SOF];
 	int source;	/* SSI stream source */
@@ -78,12 +77,11 @@ struct ipu_isys_pipeline {
 	struct ipu_isys_csi2_be *csi2_be;
 	struct ipu_isys_csi2_be_soc *csi2_be_soc;
 	struct ipu_isys_csi2 *csi2;
-	struct ipu_isys_tpg *tpg;
+
 	/*
 	 * Number of capture queues, write access serialised using struct
 	 * ipu_isys.stream_mutex
 	 */
-	/* If it supports vc, this is number of links for the same vc. */
 	int nr_queues;
 	int nr_streaming;	/* Number of capture queues streaming */
 	int streaming;	/* Has streaming been really started? */
@@ -92,8 +90,11 @@ struct ipu_isys_pipeline {
 	struct completion stream_close_completion;
 	struct completion stream_start_completion;
 	struct completion stream_stop_completion;
-	struct completion capture_ack_completion;
 	struct ipu_isys *isys;
+
+	spinlock_t listlock;	/* Protect framebuflist */
+	struct list_head framebuflist;
+	struct list_head framebuflist_fw;
 
 	void (*capture_done[IPU_NUM_CAPTURE_DONE])
 	 (struct ipu_isys_pipeline *ip,
@@ -113,15 +114,23 @@ struct ipu_isys_pipeline {
 	spinlock_t short_packet_queue_lock;
 	struct list_head pending_interlaced_bufs;
 	unsigned int short_packet_trace_index;
-	unsigned int vc;
-	unsigned int stream_id;
 	struct media_graph graph;
 	struct media_entity_enum entity_enum;
-	struct ipu_isys_sub_stream_vc asv[CSI2_BE_SOC_SOURCE_PADS_NUM];
 };
 
 #define to_ipu_isys_pipeline(__pipe)				\
 	container_of((__pipe), struct ipu_isys_pipeline, pipe)
+
+struct video_stream_watermark {
+	u32 width;
+	u32 height;
+	u32 vblank;
+	u32 hblank;
+	u32 frame_rate;
+	u64 pixel_rate;
+	u64 stream_data_rate;
+	struct list_head stream_node;
+};
 
 struct ipu_isys_video {
 	/* Serialise access to other fields in the struct. */
@@ -136,13 +145,21 @@ struct ipu_isys_video {
 	struct ipu_isys_pipeline ip;
 	unsigned int streaming;
 	bool packed;
+	bool compression;
+	bool initialized;
+	struct v4l2_ctrl_handler ctrl_handler;
+	struct v4l2_ctrl *compression_ctrl;
+	unsigned int ts_offsets[VIDEO_MAX_PLANES];
 	unsigned int line_header_length;	/* bits */
 	unsigned int line_footer_length;	/* bits */
-	const struct ipu_isys_pixelformat *(*try_fmt_vid_mplane)(
-		struct ipu_isys_video *av,
-		struct v4l2_pix_format_mplane *mpix);
-	void (*prepare_firmware_stream_cfg)(struct ipu_isys_video *av,
-		struct ipu_fw_isys_stream_cfg_data_abi *cfg);
+
+	struct video_stream_watermark *watermark;
+
+	const struct ipu_isys_pixelformat *
+		(*try_fmt_vid_mplane)(struct ipu_isys_video *av,
+				      struct v4l2_pix_format_mplane *mpix);
+	void (*prepare_fw_stream)(struct ipu_isys_video *av,
+				  struct ipu_fw_isys_stream_cfg_data_abi *cfg);
 };
 
 #define ipu_isys_queue_to_video(__aq) \
@@ -169,6 +186,10 @@ const struct ipu_isys_pixelformat *
 ipu_isys_video_try_fmt_vid_mplane(struct ipu_isys_video *av,
 				  struct v4l2_pix_format_mplane *mpix,
 				  int store_csi2_header);
+
+void
+ipu_isys_prepare_fw_cfg_default(struct ipu_isys_video *av,
+				struct ipu_fw_isys_stream_cfg_data_abi *cfg);
 
 void ipu_isys_prepare_firmware_stream_cfg_default(
 	struct ipu_isys_video *av,

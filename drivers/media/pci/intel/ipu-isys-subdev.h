@@ -68,26 +68,16 @@ struct ipu_isys_subdev {
 	struct ipu_isys *isys;
 	u32 const *const *supported_codes;
 	struct media_pad *pad;
-	struct v4l2_mbus_framefmt **ffmt;
+	struct v4l2_mbus_framefmt *ffmt;
 	struct v4l2_rect *crop;
 	struct v4l2_rect *compose;
-	struct {
-		unsigned int *stream_id;
-		 DECLARE_BITMAP(streams_stat, 32);
-	} *stream;	/* stream enable/disable status, indexed by pad */
-	struct {
-		unsigned int sink;
-		unsigned int source;
-		int flags;
-	} *route;	/* pad level info, indexed by stream */
-	unsigned int nstreams;
 	unsigned int nsinks;
 	unsigned int nsources;
 	struct v4l2_ctrl_handler ctrl_handler;
 	void (*ctrl_init)(struct v4l2_subdev *sd);
 	void (*set_ffmt)(struct v4l2_subdev *sd,
-	      struct v4l2_subdev_state *cfg,
-			  struct v4l2_subdev_format *fmt);
+			 struct v4l2_subdev_state *state,
+			 struct v4l2_subdev_format *fmt);
 	struct {
 		bool crop;
 		bool compose;
@@ -101,9 +91,8 @@ struct ipu_isys_subdev {
 	container_of(__sd, struct ipu_isys_subdev, sd)
 
 struct v4l2_mbus_framefmt *__ipu_isys_get_ffmt(struct v4l2_subdev *sd,
-			   struct v4l2_subdev_state *cfg,
+					       struct v4l2_subdev_state *state,
 					       unsigned int pad,
-					       unsigned int stream,
 					       unsigned int which);
 
 unsigned int ipu_isys_mbus_code_to_bpp(u32 code);
@@ -153,14 +142,18 @@ int ipu_isys_subdev_link_validate(struct v4l2_subdev *sd,
 
 int ipu_isys_subdev_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh);
 int ipu_isys_subdev_close(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh);
+
+#define ISYS_SUBDEV_NO_PAD	(-1)
+
 int ipu_isys_subdev_init(struct ipu_isys_subdev *asd,
 			 struct v4l2_subdev_ops *ops,
 			 unsigned int nr_ctrls,
 			 unsigned int num_pads,
-			 unsigned int num_streams,
 			 unsigned int num_source,
 			 unsigned int num_sink,
-			 unsigned int sd_flags);
+			 unsigned int sd_flags,
+			 int src_pad_idx,
+			 int sink_pad_idx);
 void ipu_isys_subdev_cleanup(struct ipu_isys_subdev *asd);
 int ipu_isys_subdev_get_frame_desc(struct v4l2_subdev *sd,
 				   struct v4l2_mbus_frame_desc *desc);

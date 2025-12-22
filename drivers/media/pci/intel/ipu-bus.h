@@ -23,6 +23,7 @@ struct ipu_bus_device {
 	struct ipu_bus_driver *adrv;
 	struct device *iommu;
 	struct iommu_device iommu_dev;
+	struct ipu_mmu *mmu;
 	struct ipu_device *isp;
 	struct ipu_subsystem_trace_config *trace_cfg;
 	struct ipu_buttress_ctrl *ctrl;

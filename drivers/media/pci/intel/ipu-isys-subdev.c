@@ -148,19 +148,16 @@ u32 ipu_isys_subdev_code_to_uncompressed(u32 sink_code)
 }
 
 struct v4l2_mbus_framefmt *__ipu_isys_get_ffmt(struct v4l2_subdev *sd,
-			   struct v4l2_subdev_state *cfg,
+					       struct v4l2_subdev_state *state,
 					       unsigned int pad,
-					       unsigned int stream,
 					       unsigned int which)
 {
 	struct ipu_isys_subdev *asd = to_ipu_isys_subdev(sd);
 
 	if (which == V4L2_SUBDEV_FORMAT_ACTIVE)
-		return &asd->ffmt[pad][stream];
+		return &asd->ffmt[pad];
 	else
-		return v4l2_subdev_get_try_format(
-							 sd,
-							 cfg, pad);
+		return v4l2_subdev_state_get_format(state, pad);
 }
 
 struct v4l2_rect *__ipu_isys_get_selection(struct v4l2_subdev *sd,
@@ -248,7 +245,7 @@ int ipu_isys_subdev_fmt_propagate(struct v4l2_subdev *sd,
 	}
 
 	for (i = 0; i < sd->entity.num_pads; i++) {
-		ffmts[i] = __ipu_isys_get_ffmt(sd, cfg, i, 0, which);
+		ffmts[i] = __ipu_isys_get_ffmt(sd, cfg, i, which);
 		crops[i] = __ipu_isys_get_selection(
 			sd, cfg, V4L2_SEL_TGT_CROP, i, which);
 		compose[i] = __ipu_isys_get_selection(
@@ -383,14 +380,12 @@ int ipu_isys_subdev_set_ffmt_default(struct v4l2_subdev *sd,
 				      struct v4l2_subdev_format *fmt)
 {
 	struct v4l2_mbus_framefmt *ffmt =
-		__ipu_isys_get_ffmt(sd, cfg, fmt->pad, fmt->stream,
-					   fmt->which);
+		__ipu_isys_get_ffmt(sd, cfg, fmt->pad, fmt->which);
 
 	/* No propagation for non-zero pads. */
 	if (fmt->pad) {
 		struct v4l2_mbus_framefmt *sink_ffmt =
-			__ipu_isys_get_ffmt(sd, cfg, 0, fmt->stream,
-						   fmt->which);
+			__ipu_isys_get_ffmt(sd, cfg, 0, fmt->which);
 
 		ffmt->width = sink_ffmt->width;
 		ffmt->height = sink_ffmt->height;
@@ -414,8 +409,7 @@ int __ipu_isys_subdev_set_ffmt(struct v4l2_subdev *sd,
 {
 	struct ipu_isys_subdev *asd = to_ipu_isys_subdev(sd);
 	struct v4l2_mbus_framefmt *ffmt =
-		__ipu_isys_get_ffmt(sd, cfg, fmt->pad, fmt->stream,
-					   fmt->which);
+		__ipu_isys_get_ffmt(sd, cfg, fmt->pad, fmt->which);
 	u32 code = asd->supported_codes[fmt->pad][0];
 	unsigned int i;
 
@@ -470,7 +464,6 @@ int ipu_isys_subdev_get_ffmt(struct v4l2_subdev *sd,
 
 	mutex_lock(&asd->mutex);
 	fmt->format = *__ipu_isys_get_ffmt(sd, cfg, fmt->pad,
-					   fmt->stream,
 					   fmt->which);
 	mutex_unlock(&asd->mutex);
 
@@ -657,8 +650,7 @@ int ipu_isys_subdev_set_sel(struct v4l2_subdev *sd,
 	case V4L2_SEL_TGT_CROP:
 		if (pad->flags & MEDIA_PAD_FL_SINK) {
 			struct v4l2_mbus_framefmt *ffmt =
-				__ipu_isys_get_ffmt(sd, cfg, sel->pad, 0,
-							   sel->which);
+				__ipu_isys_get_ffmt(sd, cfg, sel->pad, sel->which);
 
 			__r.width = ffmt->width;
 			__r.height = ffmt->height;
@@ -886,12 +878,13 @@ int ipu_isys_subdev_init(struct ipu_isys_subdev *asd,
 			 struct v4l2_subdev_ops *ops,
 			 unsigned int nr_ctrls,
 			 unsigned int num_pads,
-			 unsigned int num_streams,
 			 unsigned int num_source,
 			 unsigned int num_sink,
-			 unsigned int sd_flags)
+			 unsigned int sd_flags,
+			 int src_pad_idx,
+			 int sink_pad_idx)
 {
-	int i;
+	unsigned int i;
 	int rval = -EINVAL;
 
 	mutex_init(&asd->mutex);
@@ -900,18 +893,29 @@ int ipu_isys_subdev_init(struct ipu_isys_subdev *asd,
 
 	asd->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE | sd_flags;
 	asd->sd.owner = THIS_MODULE;
+	asd->sd.entity.function = MEDIA_ENT_F_VID_IF_BRIDGE;
 
-	asd->nstreams = num_streams;
 	asd->nsources = num_source;
 	asd->nsinks = num_sink;
 
 	asd->pad = devm_kcalloc(&asd->isys->adev->dev, num_pads,
 				sizeof(*asd->pad), GFP_KERNEL);
 
-	asd->ffmt = (struct v4l2_mbus_framefmt **)
-			devm_kcalloc(&asd->isys->adev->dev, num_pads,
-				     sizeof(struct v4l2_mbus_framefmt *),
-				     GFP_KERNEL);
+	/*
+	 * Out of range IDX means that this particular type of pad
+	 * does not exist.
+	 */
+	if (src_pad_idx != ISYS_SUBDEV_NO_PAD) {
+		for (i = 0; i < num_source; i++)
+			asd->pad[src_pad_idx + i].flags = MEDIA_PAD_FL_SOURCE;
+	}
+	if (sink_pad_idx != ISYS_SUBDEV_NO_PAD) {
+		for (i = 0; i < num_sink; i++)
+			asd->pad[sink_pad_idx + i].flags = MEDIA_PAD_FL_SINK;
+	}
+
+	asd->ffmt = devm_kcalloc(&asd->isys->adev->dev, num_pads,
+				 sizeof(*asd->ffmt), GFP_KERNEL);
 
 	asd->crop = devm_kcalloc(&asd->isys->adev->dev, num_pads,
 				 sizeof(*asd->crop), GFP_KERNEL);
@@ -921,29 +925,9 @@ int ipu_isys_subdev_init(struct ipu_isys_subdev *asd,
 
 	asd->valid_tgts = devm_kcalloc(&asd->isys->adev->dev, num_pads,
 				       sizeof(*asd->valid_tgts), GFP_KERNEL);
-	asd->route = devm_kcalloc(&asd->isys->adev->dev, num_streams,
-				  sizeof(*asd->route), GFP_KERNEL);
-
-	asd->stream = devm_kcalloc(&asd->isys->adev->dev, num_pads,
-				   sizeof(*asd->stream), GFP_KERNEL);
-
 	if (!asd->pad || !asd->ffmt || !asd->crop || !asd->compose ||
-	    !asd->valid_tgts || !asd->route || !asd->stream)
+	    !asd->valid_tgts)
 		return -ENOMEM;
-
-	for (i = 0; i < num_pads; i++) {
-		asd->ffmt[i] = (struct v4l2_mbus_framefmt *)
-		    devm_kcalloc(&asd->isys->adev->dev, num_streams,
-				 sizeof(struct v4l2_mbus_framefmt), GFP_KERNEL);
-		if (!asd->ffmt[i])
-			return -ENOMEM;
-
-		asd->stream[i].stream_id =
-		    devm_kcalloc(&asd->isys->adev->dev, num_source,
-				 sizeof(*asd->stream[i].stream_id), GFP_KERNEL);
-		if (!asd->stream[i].stream_id)
-			return -ENOMEM;
-	}
 
 	rval = media_entity_pads_init(&asd->sd.entity, num_pads, asd->pad);
 	if (rval)

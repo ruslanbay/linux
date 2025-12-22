@@ -71,108 +71,6 @@
 #define TBL_PHYS_ADDR(a)	((phys_addr_t)(a) << ISP_PADDR_SHIFT)
 #define TBL_VIRT_ADDR(a)	phys_to_virt(TBL_PHYS_ADDR(a))
 
-static void zlw_invalidate(struct ipu_mmu *mmu, struct ipu_mmu_hw *mmu_hw)
-{
-	unsigned int retry = 0;
-	unsigned int i, j;
-	int ret;
-
-	for (i = 0; i < mmu_hw->nr_l1streams; i++) {
-		/* We need to invalidate only the zlw enabled stream IDs */
-		if (mmu_hw->l1_zlw_en[i]) {
-			/*
-			 * Maximum 16 blocks per L1 stream
-			 * Write trash buffer iova offset to the FW_ZLW
-			 * register. This will trigger pre-fetching of next 16
-			 * pages from the page table. So we need to increment
-			 * iova address by 16 * 4K to trigger the next 16 pages.
-			 * Once this loop is completed, the L1 cache will be
-			 * filled with trash buffer translation.
-			 *
-			 * TODO: Instead of maximum 16 blocks, use the allocated
-			 * block size
-			 */
-			for (j = 0; j < mmu_hw->l1_block_sz[i]; j++)
-				writel(mmu->iova_addr_trash +
-					   j * MMUV2_TRASH_L1_BLOCK_OFFSET,
-					   mmu_hw->base +
-					   MMUV2_AT_REG_L1_ZLW_INSERTION(i));
-
-			/*
-			 * Now we need to fill the L2 cache entry. L2 cache
-			 * entries will be automatically updated, based on the
-			 * L1 entry. The above loop for L1 will update only one
-			 * of the two entries in L2 as the L1 is under 4MB
-			 * range. To force the other entry in L2 to update, we
-			 * just need to trigger another pre-fetch which is
-			 * outside the above 4MB range.
-			 */
-			writel(mmu->iova_addr_trash +
-				   MMUV2_TRASH_L2_BLOCK_OFFSET,
-				   mmu_hw->base +
-				   MMUV2_AT_REG_L1_ZLW_INSERTION(0));
-		}
-	}
-
-	/*
-	 * Wait until AT is ready. FIFO read should return 2 when AT is ready.
-	 * Retry value of 1000 is just by guess work to avoid the forever loop.
-	 */
-	do {
-		if (retry > 1000) {
-			dev_err(mmu->dev, "zlw invalidation failed\n");
-			return;
-		}
-		ret = readl(mmu_hw->base + MMUV2_AT_REG_L1_FW_ZLW_FIFO);
-		retry++;
-	} while (ret != 2);
-}
-
-static void tlb_invalidate(struct ipu_mmu *mmu)
-{
-	unsigned int i;
-	unsigned long flags;
-
-	spin_lock_irqsave(&mmu->ready_lock, flags);
-	if (!mmu->ready) {
-		spin_unlock_irqrestore(&mmu->ready_lock, flags);
-		return;
-	}
-
-	for (i = 0; i < mmu->nr_mmus; i++) {
-		u32 inv;
-
-		/*
-		 * To avoid the HW bug induced dead lock in some of the IPU4
-		 * MMUs on successive invalidate calls, we need to first do a
-		 * read to the page table base before writing the invalidate
-		 * register. MMUs which need to implement this WA, will have
-		 * the insert_read_before_invalidate flasg set as true.
-		 * Disregard the return value of the read.
-		 */
-		if (mmu->mmu_hw[i].insert_read_before_invalidate)
-			readl(mmu->mmu_hw[i].base + REG_L1_PHYS);
-
-		/* Normal invalidate or zlw invalidate */
-		if (mmu->mmu_hw[i].zlw_invalidate) {
-			/* trash buffer must be mapped by now, just in case! */
-			WARN_ON(!mmu->iova_addr_trash);
-
-			zlw_invalidate(mmu, &mmu->mmu_hw[i]);
-		} else {
-			if (mmu->mmu_hw[i].nr_l1streams == 32)
-				inv = 0xffffffff;
-			else if (mmu->mmu_hw[i].nr_l1streams == 0)
-				inv = MMU0_TLB_INVALIDATE;
-			else
-				inv = MMU1_TLB_INVALIDATE;
-			writel(inv, mmu->mmu_hw[i].base +
-				   REG_TLB_INVALIDATE);
-		}
-	}
-	spin_unlock_irqrestore(&mmu->ready_lock, flags);
-}
-
 #ifdef DEBUG
 static void page_table_dump(struct ipu_mmu_info *mmu_info)
 {
@@ -223,69 +121,122 @@ static u32 *alloc_page_table(struct ipu_mmu_info *mmu_info, bool l1)
 	return pt;
 }
 
+static dma_addr_t map_single(struct ipu_mmu_info *mmu_info, void *ptr)
+{
+	dma_addr_t dma;
+
+	dma = dma_map_single(mmu_info->dev, ptr, PAGE_SIZE, DMA_BIDIRECTIONAL);
+	if (dma_mapping_error(mmu_info->dev, dma))
+		return 0;
+
+	return dma;
+}
+
+static u32 *alloc_l2_pt(struct ipu_mmu_info *mmu_info)
+{
+	u32 *pt = (u32 *)get_zeroed_page(GFP_ATOMIC | GFP_DMA32);
+	int i;
+
+	if (!pt)
+		return NULL;
+
+	dev_dbg(mmu_info->dev, "%s get_zeroed_page() == %p\n", __func__, pt);
+
+	for (i = 0; i < ISP_L1PT_PTES; i++)
+		pt[i] = mmu_info->dummy_page_pteval;
+
+	return pt;
+}
+
+static void l2_unmap(struct ipu_mmu_info *mmu_info, unsigned long iova,
+		     phys_addr_t dummy, size_t size);
 static int l2_map(struct ipu_mmu_info *mmu_info, unsigned long iova,
 		  phys_addr_t paddr, size_t size)
 {
-	u32 l1_idx = iova >> ISP_L1PT_SHIFT;
-	u32 l1_entry = mmu_info->pgtbl[l1_idx];
-	u32 *l2_pt;
-	u32 iova_start = iova;
+	struct device *dev = mmu_info->dev;
+	u32 l1_idx;
+	u32 l1_entry;
+	u32 *l2_pt, *l2_virt;
 	unsigned int l2_idx;
 	unsigned long flags;
+	dma_addr_t dma;
+	unsigned int l2_entries;
+	size_t mapped = 0;
+	int err = 0;
 
-	pr_debug("mapping l2 page table for l1 index %u (iova %8.8x)\n",
-		 l1_idx, (u32) iova);
-
-	if (l1_entry == mmu_info->dummy_l2_tbl) {
-		u32 *l2_virt = alloc_page_table(mmu_info, false);
-
-		if (!l2_virt)
-			return -ENOMEM;
-
-		l1_entry = virt_to_phys(l2_virt) >> ISP_PADDR_SHIFT;
-		pr_debug("allocated page for l1_idx %u\n", l1_idx);
-
-		spin_lock_irqsave(&mmu_info->lock, flags);
-		if (mmu_info->pgtbl[l1_idx] == mmu_info->dummy_l2_tbl) {
-			mmu_info->pgtbl[l1_idx] = l1_entry;
-#ifdef CONFIG_X86
-			clflush_cache_range(&mmu_info->pgtbl[l1_idx],
-					    sizeof(mmu_info->pgtbl[l1_idx]));
-#endif /* CONFIG_X86 */
-		} else {
-			spin_unlock_irqrestore(&mmu_info->lock, flags);
-			free_page((unsigned long)TBL_VIRT_ADDR(l1_entry));
-			spin_lock_irqsave(&mmu_info->lock, flags);
-		}
-	} else {
-		spin_lock_irqsave(&mmu_info->lock, flags);
-	}
-
-	l2_pt = TBL_VIRT_ADDR(mmu_info->pgtbl[l1_idx]);
-
-	pr_debug("l2_pt at %p\n", l2_pt);
+	spin_lock_irqsave(&mmu_info->lock, flags);
 
 	paddr = ALIGN(paddr, ISP_PAGE_SIZE);
+	for (l1_idx = iova >> ISP_L1PT_SHIFT;
+	     size > 0 && l1_idx < ISP_L1PT_PTES; l1_idx++) {
+		dev_dbg(dev,
+			"mapping l2 page table for l1 index %u (iova %8.8x)\n",
+			l1_idx, (u32)iova);
 
-	l2_idx = (iova_start & ISP_L2PT_MASK) >> ISP_L2PT_SHIFT;
+		l1_entry = mmu_info->l1_pt[l1_idx];
+		if (l1_entry == mmu_info->dummy_l2_pteval) {
+			l2_virt = mmu_info->l2_pts[l1_idx];
+			if (likely(!l2_virt)) {
+				l2_virt = alloc_l2_pt(mmu_info);
+				if (!l2_virt) {
+					err = -ENOMEM;
+					goto error;
+				}
+			}
 
-	pr_debug("l2_idx %u, phys 0x%8.8x\n", l2_idx, l2_pt[l2_idx]);
-	if (l2_pt[l2_idx] != mmu_info->dummy_page) {
-		spin_unlock_irqrestore(&mmu_info->lock, flags);
-		return -EBUSY;
+			dma = map_single(mmu_info, l2_virt);
+			if (!dma) {
+				dev_err(dev, "Failed to map l2pt page\n");
+				free_page((unsigned long)l2_virt);
+				err = -EINVAL;
+				goto error;
+			}
+
+			l1_entry = dma >> ISP_PADDR_SHIFT;
+
+			dev_dbg(dev, "page for l1_idx %u %p allocated\n",
+				l1_idx, l2_virt);
+			mmu_info->l1_pt[l1_idx] = l1_entry;
+			mmu_info->l2_pts[l1_idx] = l2_virt;
+
+			clflush_cache_range(&mmu_info->l1_pt[l1_idx],
+					    sizeof(mmu_info->l1_pt[l1_idx]));
+		}
+
+		l2_pt = mmu_info->l2_pts[l1_idx];
+		l2_entries = 0;
+
+		for (l2_idx = (iova & ISP_L2PT_MASK) >> ISP_L2PT_SHIFT;
+		     size > 0 && l2_idx < ISP_L2PT_PTES; l2_idx++) {
+			l2_pt[l2_idx] = paddr >> ISP_PADDR_SHIFT;
+
+			dev_dbg(dev, "l2 index %u mapped as 0x%8.8x\n", l2_idx,
+				l2_pt[l2_idx]);
+
+			iova += ISP_PAGE_SIZE;
+			paddr += ISP_PAGE_SIZE;
+			mapped += ISP_PAGE_SIZE;
+			size -= ISP_PAGE_SIZE;
+
+			l2_entries++;
+		}
+
+		WARN_ON_ONCE(!l2_entries);
+		clflush_cache_range(&l2_pt[l2_idx - l2_entries],
+				    sizeof(l2_pt[0]) * l2_entries);
 	}
-
-	l2_pt[l2_idx] = paddr >> ISP_PADDR_SHIFT;
 
 	spin_unlock_irqrestore(&mmu_info->lock, flags);
 
-#ifdef CONFIG_X86
-	clflush_cache_range(&l2_pt[l2_idx], sizeof(l2_pt[l2_idx]));
-#endif /* CONFIG_X86 */
-
-	pr_debug("l2 index %u mapped as 0x%8.8x\n", l2_idx, l2_pt[l2_idx]);
-
 	return 0;
+
+error:
+	spin_unlock_irqrestore(&mmu_info->lock, flags);
+	/* unroll mapping in case something went wrong */
+	if (mapped)
+		l2_unmap(mmu_info, iova - mapped, paddr - mapped, mapped);
+
+	return err;
 }
 
 static int __ipu_mmu_map(struct ipu_mmu_info *mmu_info, unsigned long iova,
@@ -301,64 +252,88 @@ static int __ipu_mmu_map(struct ipu_mmu_info *mmu_info, unsigned long iova,
 	return l2_map(mmu_info, iova_start, paddr, size);
 }
 
-static size_t l2_unmap(struct ipu_mmu_info *mmu_info, unsigned long iova,
-		       phys_addr_t dummy, size_t size)
+static void l2_unmap(struct ipu_mmu_info *mmu_info, unsigned long iova,
+		     phys_addr_t dummy, size_t size)
 {
-	u32 l1_idx = iova >> ISP_L1PT_SHIFT;
-	u32 *l2_pt = TBL_VIRT_ADDR(mmu_info->pgtbl[l1_idx]);
-	u32 iova_start = iova;
+	u32 l1_idx;
+	u32 *l2_pt;
 	unsigned int l2_idx;
+	unsigned int l2_entries;
 	size_t unmapped = 0;
+	unsigned long flags;
 
-	pr_debug("unmapping l2 page table for l1 index %u (iova 0x%8.8lx)\n",
-		 l1_idx, iova);
+	spin_lock_irqsave(&mmu_info->lock, flags);
+	for (l1_idx = iova >> ISP_L1PT_SHIFT;
+	     size > 0 && l1_idx < ISP_L1PT_PTES; l1_idx++) {
+		dev_dbg(mmu_info->dev,
+			"unmapping l2 page table for l1 index %u (iova 0x%8.8lx)\n",
+			l1_idx, iova);
 
-	if (mmu_info->pgtbl[l1_idx] == mmu_info->dummy_l2_tbl)
-		return -EINVAL;
+		if (mmu_info->l1_pt[l1_idx] == mmu_info->dummy_l2_pteval) {
+			dev_err(mmu_info->dev,
+				"unmap iova 0x%8.8lx l1 idx %u which was not mapped\n",
+				iova, l1_idx);
+			continue;
+		}
+		l2_pt = mmu_info->l2_pts[l1_idx];
 
-	pr_debug("l2_pt at %p\n", l2_pt);
+		l2_entries = 0;
+		for (l2_idx = (iova & ISP_L2PT_MASK) >> ISP_L2PT_SHIFT;
+		     size > 0 && l2_idx < ISP_L2PT_PTES; l2_idx++) {
+			dev_dbg(mmu_info->dev,
+				"unmap l2 index %u with pteval 0x%10.10llx\n",
+				l2_idx, TBL_PHYS_ADDR(l2_pt[l2_idx]));
+			l2_pt[l2_idx] = mmu_info->dummy_page_pteval;
 
-	for (l2_idx = (iova_start & ISP_L2PT_MASK) >> ISP_L2PT_SHIFT;
-	     (iova_start & ISP_L1PT_MASK) + (l2_idx << ISP_PAGE_SHIFT)
-	     < iova_start + size && l2_idx < ISP_L2PT_PTES; l2_idx++) {
-		unsigned long flags;
+			iova += ISP_PAGE_SIZE;
+			unmapped += ISP_PAGE_SIZE;
+			size -= ISP_PAGE_SIZE;
 
-		pr_debug("l2 index %u unmapped, was 0x%10.10llx\n",
-			 l2_idx, TBL_PHYS_ADDR(l2_pt[l2_idx]));
-		spin_lock_irqsave(&mmu_info->lock, flags);
-		l2_pt[l2_idx] = mmu_info->dummy_page;
-		spin_unlock_irqrestore(&mmu_info->lock, flags);
-#ifdef CONFIG_X86
-		clflush_cache_range(&l2_pt[l2_idx], sizeof(l2_pt[l2_idx]));
-#endif /* CONFIG_X86 */
-		unmapped++;
+			l2_entries++;
+		}
+
+		WARN_ON_ONCE(!l2_entries);
+		clflush_cache_range(&l2_pt[l2_idx - l2_entries],
+				    sizeof(l2_pt[0]) * l2_entries);
 	}
 
-	return unmapped << ISP_PAGE_SHIFT;
+	WARN_ON_ONCE(size);
+	spin_unlock_irqrestore(&mmu_info->lock, flags);
 }
 
 static size_t __ipu_mmu_unmap(struct ipu_mmu_info *mmu_info,
 			    unsigned long iova, size_t size)
 {
-	return l2_unmap(mmu_info, iova, 0, size);
+	l2_unmap(mmu_info, iova, 0, size);
+	return 0;
 }
 
-static int allocate_trash_buffer(struct ipu_bus_device *adev)
+static int allocate_trash_buffer(struct ipu_mmu *mmu)
 {
-	struct ipu_mmu *mmu = ipu_bus_get_drvdata(adev);
 	unsigned int n_pages = PAGE_ALIGN(IPU_MMUV2_TRASH_RANGE) >> PAGE_SHIFT;
 	struct iova *iova;
 	u32 iova_addr;
 	unsigned int i;
+	dma_addr_t dma;
 	int ret;
 
 	/* Allocate 8MB in iova range */
 	iova = alloc_iova(&mmu->dmap->iovad, n_pages,
-			  dma_get_mask(mmu->dev) >> PAGE_SHIFT, 0);
+			  mmu->dmap->mmu_info->aperture_end >> PAGE_SHIFT, 0);
 	if (!iova) {
-		dev_err(&adev->dev, "cannot allocate iova range for trash\n");
+		dev_err(mmu->dev, "cannot allocate iova range for trash\n");
 		return -ENOMEM;
 	}
+
+	dma = dma_map_page(mmu->dmap->mmu_info->dev, mmu->trash_page, 0,
+			   PAGE_SIZE, DMA_BIDIRECTIONAL);
+	if (dma_mapping_error(mmu->dmap->mmu_info->dev, dma)) {
+		dev_err(mmu->dmap->mmu_info->dev, "Failed to map trash page\n");
+		ret = -ENOMEM;
+		goto out_free_iova;
+	}
+
+	mmu->pci_trash_page = dma;
 
 	/*
 	 * Map the 8MB iova address range to the same physical trash page
@@ -367,9 +342,9 @@ static int allocate_trash_buffer(struct ipu_bus_device *adev)
 	iova_addr = iova->pfn_lo;
 	for (i = 0; i < n_pages; i++) {
 		ret = ipu_mmu_map(mmu->dmap->mmu_info, iova_addr << PAGE_SHIFT,
-				page_to_phys(mmu->trash_page), PAGE_SIZE);
+				  mmu->pci_trash_page, PAGE_SIZE);
 		if (ret) {
-			dev_err(&adev->dev,
+			dev_err(mmu->dev,
 				"mapping trash buffer range failed\n");
 			goto out_unmap;
 		}
@@ -377,111 +352,63 @@ static int allocate_trash_buffer(struct ipu_bus_device *adev)
 		iova_addr++;
 	}
 
-	/* save the address for the ZLW invalidation */
-	mmu->iova_addr_trash = iova->pfn_lo << PAGE_SHIFT;
-	dev_info(&adev->dev, "iova trash buffer for MMUID: %d is %u\n",
-		 mmu->mmid, (unsigned int)mmu->iova_addr_trash);
+	mmu->iova_trash_page = iova->pfn_lo << PAGE_SHIFT;
+	dev_dbg(mmu->dev, "iova trash buffer for MMUID: %d is %u\n",
+		mmu->mmid, (unsigned int)mmu->iova_trash_page);
 	return 0;
 
 out_unmap:
 	ipu_mmu_unmap(mmu->dmap->mmu_info, iova->pfn_lo << PAGE_SHIFT,
-		    (iova->pfn_hi - iova->pfn_lo + 1) << PAGE_SHIFT);
+		      (iova->pfn_hi - iova->pfn_lo + 1) << PAGE_SHIFT);
+	dma_unmap_page(mmu->dmap->mmu_info->dev, mmu->pci_trash_page,
+		       PAGE_SIZE, DMA_BIDIRECTIONAL);
+out_free_iova:
 	__free_iova(&mmu->dmap->iovad, iova);
 	return ret;
 }
 
-static int ipu_mmu_hw_init(struct device *dev)
+int ipu_mmu_hw_init(struct ipu_mmu *mmu)
 {
-	struct ipu_bus_device *adev = to_ipu_bus_device(dev);
-	struct ipu_mmu *mmu = ipu_bus_get_drvdata(adev);
 	unsigned int i;
 	unsigned long flags;
 	struct ipu_mmu_info *mmu_info;
 
-	dev_dbg(dev, "mmu hw init\n");
-	/*
-	 * FIXME: following fix for null pointer check is not a complete one.
-	 * if mmu is not powered cycled before being used, the page table
-	 * address will still not be set into HW.
-	 */
-	if (!mmu->dmap) {
-		dev_warn(dev, "mmu is not ready yet. skipping.\n");
-		return 0;
-	}
+	dev_dbg(mmu->dev, "mmu hw init\n");
 
 	mmu_info = mmu->dmap->mmu_info;
 
 	/* Initialise the each MMU HW block */
 	for (i = 0; i < mmu->nr_mmus; i++) {
 		struct ipu_mmu_hw *mmu_hw = &mmu->mmu_hw[i];
-#if defined(CONFIG_VIDEO_INTEL_IPU4) || defined(CONFIG_VIDEO_INTEL_IPU4P)
-		bool zlw_invalidate = false;
-#endif
 		unsigned int j;
 		u16 block_addr;
 
 		/* Write page table address per MMU */
-		writel((phys_addr_t) virt_to_phys(mmu_info->pgtbl)
-			   >> ISP_PADDR_SHIFT,
-			   mmu->mmu_hw[i].base + REG_L1_PHYS);
+		writel((phys_addr_t)mmu_info->l1_pt_dma,
+		       mmu->mmu_hw[i].base + REG_L1_PHYS);
 
 		/* Set info bits per MMU */
 		writel(mmu->mmu_hw[i].info_bits,
-			   mmu->mmu_hw[i].base + REG_INFO);
+		       mmu->mmu_hw[i].base + REG_INFO);
 
 		/* Configure MMU TLB stream configuration for L1 */
 		for (j = 0, block_addr = 0; j < mmu_hw->nr_l1streams;
 		     block_addr += mmu->mmu_hw[i].l1_block_sz[j], j++) {
 			if (block_addr > IPU_MAX_LI_BLOCK_ADDR) {
-				dev_err(dev, "invalid L1 configuration\n");
+				dev_err(mmu->dev, "invalid L1 configuration\n");
 				return -EINVAL;
 			}
 
 			/* Write block start address for each streams */
 			writel(block_addr, mmu_hw->base +
 				   mmu_hw->l1_stream_id_reg_offset + 4 * j);
-
-#if defined(CONFIG_VIDEO_INTEL_IPU4) || defined(CONFIG_VIDEO_INTEL_IPU4P)
-			/* Enable ZLW for streams based on the init table */
-			writel(mmu->mmu_hw[i].l1_zlw_en[j],
-				   mmu_hw->base +
-				   MMUV2_AT_REG_L1_ZLW_EN_SID(j));
-
-			/* To track if zlw is enabled in any streams */
-			zlw_invalidate |= mmu->mmu_hw[i].l1_zlw_en[j];
-
-			/* Enable ZLW 1D mode for streams from the init table */
-			writel(mmu->mmu_hw[i].l1_zlw_1d_mode[j],
-				   mmu_hw->base +
-				   MMUV2_AT_REG_L1_ZLW_1DMODE_SID(j));
-
-			/* Set when the ZLW insertion will happen */
-			writel(mmu->mmu_hw[i].l1_ins_zlw_ahead_pages[j],
-				   mmu_hw->base +
-				   MMUV2_AT_REG_L1_ZLW_INS_N_AHEAD_SID(j));
-
-			/* Set if ZLW 2D mode active for each streams */
-			writel(mmu->mmu_hw[i].l1_zlw_2d_mode[j],
-				   mmu_hw->base +
-				   MMUV2_AT_REG_L1_ZLW_2DMODE_SID(j));
-#endif
 		}
 
-#if defined(CONFIG_VIDEO_INTEL_IPU4) || defined(CONFIG_VIDEO_INTEL_IPU4P)
-		/*
-		 * If ZLW invalidate is enabled even for one stream in a MMU1,
-		 * we need to set the FW ZLW operations have higher priority
-		 * on that MMU1
-		 */
-		if (zlw_invalidate)
-			writel(1, mmu_hw->base +
-				   MMUV2_AT_REG_L1_FW_ZLW_PRIO);
-#endif
 		/* Configure MMU TLB stream configuration for L2 */
 		for (j = 0, block_addr = 0; j < mmu_hw->nr_l2streams;
 		     block_addr += mmu->mmu_hw[i].l2_block_sz[j], j++) {
 			if (block_addr > IPU_MAX_L2_BLOCK_ADDR) {
-				dev_err(dev, "invalid L2 configuration\n");
+				dev_err(mmu->dev, "invalid L2 configuration\n");
 				return -EINVAL;
 			}
 
@@ -490,21 +417,22 @@ static int ipu_mmu_hw_init(struct device *dev)
 		}
 	}
 
-	/* Allocate trash buffer, if not allocated. Only once per MMU */
-	if (!mmu->iova_addr_trash) {
+	if (!mmu->trash_page) {
 		int ret;
 
-		ret = allocate_trash_buffer(adev);
-		if (ret) {
-			dev_err(dev, "trash buffer allocation failed\n");
-			return ret;
+		mmu->trash_page = alloc_page(GFP_KERNEL);
+		if (!mmu->trash_page) {
+			dev_err(mmu->dev, "insufficient memory for trash buffer\n");
+			return -ENOMEM;
 		}
 
-		/*
-		 * Update the domain pointer to trash buffer to release it on
-		 * domain destroy
-		 */
-		mmu_info->iova_addr_trash = mmu->iova_addr_trash;
+		ret = allocate_trash_buffer(mmu);
+		if (ret) {
+			__free_page(mmu->trash_page);
+			mmu->trash_page = NULL;
+			dev_err(mmu->dev, "trash buffer allocation failed\n");
+			return ret;
+		}
 	}
 
 	spin_lock_irqsave(&mmu->ready_lock, flags);
@@ -513,18 +441,19 @@ static int ipu_mmu_hw_init(struct device *dev)
 
 	return 0;
 }
+EXPORT_SYMBOL(ipu_mmu_hw_init);
 
-static void set_mapping(struct ipu_mmu *mmu, struct ipu_dma_mapping *dmap)
+int ipu_mmu_hw_cleanup(struct ipu_mmu *mmu)
 {
-	mmu->dmap = dmap;
+	unsigned long flags;
 
-	if (!dmap)
-		return;
+	spin_lock_irqsave(&mmu->ready_lock, flags);
+	mmu->ready = false;
+	spin_unlock_irqrestore(&mmu->ready_lock, flags);
 
-	pm_runtime_get_sync(mmu->dev);
-	ipu_mmu_hw_init(mmu->dev);
-	pm_runtime_put(mmu->dev);
+	return 0;
 }
+EXPORT_SYMBOL(ipu_mmu_hw_cleanup);
 
 phys_addr_t ipu_mmu_iova_to_phys(struct ipu_mmu_info *mmu_info,
 					dma_addr_t iova)
@@ -750,116 +679,6 @@ void ipu_mmu_destroy(struct ipu_mmu_info *mmu_info)
 	kfree(mmu_info);
 }
 EXPORT_SYMBOL(ipu_mmu_destroy);
-
-static int ipu_mmu_probe(struct ipu_bus_device *adev)
-{
-	struct ipu_mmu_pdata *pdata;
-	struct ipu_mmu *mmu;
-
-	mmu = devm_kzalloc(&adev->dev, sizeof(*mmu), GFP_KERNEL);
-	if (!mmu)
-		return -ENOMEM;
-
-	dev_dbg(&adev->dev, "mmu probe %p %p\n", adev, &adev->dev);
-	ipu_bus_set_drvdata(adev, mmu);
-
-	pdata = adev->pdata;
-
-	mmu->mmid = pdata->mmid;
-
-	mmu->mmu_hw = pdata->mmu_hw;
-	mmu->nr_mmus = pdata->nr_mmus;
-	mmu->tlb_invalidate = tlb_invalidate;
-	mmu->set_mapping = set_mapping;
-	mmu->dev = &adev->dev;
-	mmu->ready = false;
-	spin_lock_init(&mmu->ready_lock);
-
-	/*
-	 * Allocate 1 page of physical memory for the trash buffer
-	 *
-	 * TODO! Could be further optimized by allocating only one page per ipu
-	 * instance instead of per mmu
-	 */
-	mmu->trash_page = alloc_page(GFP_KERNEL);
-	if (!mmu->trash_page) {
-		dev_err(&adev->dev, "insufficient memory for trash buffer\n");
-		return -ENOMEM;
-	}
-	dev_info(&adev->dev, "MMU: %d, allocated page for trash: 0x%p\n",
-		 mmu->mmid, mmu->trash_page);
-
-	pm_runtime_allow(&adev->dev);
-	pm_runtime_enable(&adev->dev);
-
-	/*
-	 * FIXME: We can't unload this --- bus_set_iommu() will
-	 * register a notifier which must stay until the devices are
-	 * gone.
-	 */
-	__module_get(THIS_MODULE);
-
-	return 0;
-}
-
-/*
- * Leave iommu ops as they were --- this means we must be called as
- * the very last.
- */
-static void ipu_mmu_remove(struct ipu_bus_device *adev)
-{
-	struct ipu_mmu *mmu = ipu_bus_get_drvdata(adev);
-
-	__free_page(mmu->trash_page);
-	dev_dbg(&adev->dev, "removed\n");
-}
-
-static irqreturn_t ipu_mmu_isr(struct ipu_bus_device *adev)
-{
-	dev_info(&adev->dev, "Yeah!\n");
-	return IRQ_NONE;
-}
-
-#ifdef CONFIG_PM
-static int ipu_mmu_suspend(struct device *dev)
-{
-	struct ipu_bus_device *adev = to_ipu_bus_device(dev);
-	struct ipu_mmu *mmu = ipu_bus_get_drvdata(adev);
-	unsigned long flags;
-
-	spin_lock_irqsave(&mmu->ready_lock, flags);
-	mmu->ready = false;
-	spin_unlock_irqrestore(&mmu->ready_lock, flags);
-
-	return 0;
-}
-
-static const struct dev_pm_ops ipu_mmu_pm_ops = {
-	.resume = ipu_mmu_hw_init,
-	.suspend = ipu_mmu_suspend,
-	.runtime_resume = ipu_mmu_hw_init,
-	.runtime_suspend = ipu_mmu_suspend,
-};
-
-#define IPU_MMU_PM_OPS	(&ipu_mmu_pm_ops)
-
-#else /* !CONFIG_PM */
-
-#define IPU_MMU_PM_OPS	NULL
-
-#endif /* !CONFIG_PM */
-
-struct ipu_bus_driver ipu_mmu_driver = {
-	.probe = ipu_mmu_probe,
-	.remove = ipu_mmu_remove,
-	.isr = ipu_mmu_isr,
-	.wanted = IPU_MMU_NAME,
-	.drv = {
-		.name = IPU_MMU_NAME,
-		.owner = THIS_MODULE,
-		.pm = IPU_MMU_PM_OPS,
-	},
-};
 
 MODULE_AUTHOR("Sakari Ailus <sakari.ailus@linux.intel.com>");
 MODULE_AUTHOR("Samu Onkalo <samu.onkalo@intel.com>");

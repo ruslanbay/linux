@@ -56,17 +56,17 @@
 #define CSI2_REG_CSI2S2M_IRQ_ENABLE		        0xD10
 #define CSI2_REG_CSI2S2M_IRQ_LEVEL_NOT_PULSE	        0xD14
 
-#ifdef IPU_VC_SUPPORT
-#define CSI2_IRQ_FS_VC(chn)	(0x10000 << ((chn) * 4))
-#define CSI2_IRQ_FE_VC(chn)	(0x20000 << ((chn) * 4))
-#define CSI2_IRQ_LS_VC(chn)	(0x40000 << ((chn) * 4))
-#define CSI2_IRQ_LE_VC(chn)	(0x80000 << ((chn) * 4))
-#else
+// #ifdef IPU_VC_SUPPORT
+// #define CSI2_IRQ_FS_VC(chn)	(0x10000 << ((chn) * 4))
+// #define CSI2_IRQ_FE_VC(chn)	(0x20000 << ((chn) * 4))
+// #define CSI2_IRQ_LS_VC(chn)	(0x40000 << ((chn) * 4))
+// #define CSI2_IRQ_LE_VC(chn)	(0x80000 << ((chn) * 4))
+// #else
 #define CSI2_IRQ_FS_VC		0x10000
 #define CSI2_IRQ_FE_VC		0x20000
 #define CSI2_IRQ_LS_VC		0x40000
 #define CSI2_IRQ_LE_VC		0x80000
-#endif /* IPU_VC_SUPPORT */
+// #endif /* IPU_VC_SUPPORT */
 #define CSI2_REG_CL0_IBUFCTL_EN_FLUSH_FOR_IDRAIN	0x6002c
 #define CSI2_REG_CL1_IBUFCTL_EN_FLUSH_FOR_IDRAIN	0x6802c
 #define IPU_REG_ISYS_IBUFCTL_EN_FLUSH_FOR_IDRAIN	0xb602c
@@ -115,17 +115,17 @@
 #define CSI2_REG_CSI2S2M_IRQ_ENABLE			0x610
 #define CSI2_REG_CSI2S2M_IRQ_LEVEL_NOT_PULSE		0x614
 
-#ifdef IPU_VC_SUPPORT
-#define CSI2_IRQ_FS_VC(chn)				(1 << ((chn) * 4))
-#define CSI2_IRQ_FE_VC(chn)				(2 << ((chn) * 4))
-#define CSI2_IRQ_LS_VC(chn)				(4 << ((chn) * 4))
-#define CSI2_IRQ_LE_VC(chn)				(8 << ((chn) * 4))
-#else
+// #ifdef IPU_VC_SUPPORT
+// #define CSI2_IRQ_FS_VC(chn)				(1 << ((chn) * 4))
+// #define CSI2_IRQ_FE_VC(chn)				(2 << ((chn) * 4))
+// #define CSI2_IRQ_LS_VC(chn)				(4 << ((chn) * 4))
+// #define CSI2_IRQ_LE_VC(chn)				(8 << ((chn) * 4))
+// #else
 #define CSI2_IRQ_FS_VC					1
 #define CSI2_IRQ_FE_VC					2
 #define CSI2_IRQ_LS_VC					4
 #define CSI2_IRQ_LE_VC					8
-#endif /* IPU_VC_SUPPORT */
+// #endif /* IPU_VC_SUPPORT */
 #endif /* CONFIG_VIDEO_INTEL_IPU4 */
 
 #define CSI2_REG_CSI_RX_ENABLE				0x00

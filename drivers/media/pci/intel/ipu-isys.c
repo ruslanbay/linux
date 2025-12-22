@@ -204,57 +204,24 @@ static void isys_register_ext_subdevs(struct ipu_isys *isys)
 
 static void isys_unregister_subdevices(struct ipu_isys *isys)
 {
-	const struct ipu_isys_internal_tpg_pdata *tpg =
-	    &isys->pdata->ipdata->tpg;
 	const struct ipu_isys_internal_csi2_pdata *csi2 =
 	    &isys->pdata->ipdata->csi2;
 	unsigned int i;
 
-	ipu_isys_csi2_be_cleanup(&isys->csi2_be);
-	ipu_isys_csi2_be_soc_cleanup(&isys->csi2_be_soc);
+	for (i = 0; i < NR_OF_CSI2_BE_SOC_DEV; i++)
+		ipu_isys_csi2_be_soc_cleanup(&isys->csi2_be_soc[i]);
 
-	ipu_isys_isa_cleanup(&isys->isa);
-
-	for (i = 0; i < tpg->ntpgs; i++)
-		ipu_isys_tpg_cleanup(&isys->tpg[i]);
-
-	for (i = 0; i < csi2->nports; i++)
+	for (i = 0; i < csi2->nports && isys->csi2; i++)
 		ipu_isys_csi2_cleanup(&isys->csi2[i]);
 }
 
 static int isys_register_subdevices(struct ipu_isys *isys)
 {
-	const struct ipu_isys_internal_tpg_pdata *tpg =
-	    &isys->pdata->ipdata->tpg;
 	const struct ipu_isys_internal_csi2_pdata *csi2 =
 	    &isys->pdata->ipdata->csi2;
-	struct ipu_isys_subdev_pdata *spdata = isys->pdata->spdata;
-	struct ipu_isys_subdev_info **sd_info;
-	DECLARE_BITMAP(csi2_enable, 32);
-	unsigned int i, j, k;
+	struct ipu_isys_csi2_be_soc *csi2_be_soc;
+	unsigned int i, k;
 	int rval;
-
-	/*
-	 * Here is somewhat a workaround, let each platform decide
-	 * if csi2 port can be optimized, which means only registered
-	 * port from pdata would be enabled.
-	 */
-	if (csi2_port_optimized && spdata) {
-		bitmap_zero(csi2_enable, 32);
-		for (sd_info = spdata->subdevs; *sd_info; sd_info++) {
-			if ((*sd_info)->csi2) {
-				i = (*sd_info)->csi2->port;
-				if (i >= csi2->nports) {
-					dev_warn(&isys->adev->dev,
-						 "invalid csi2 port %u\n", i);
-					continue;
-				}
-				bitmap_set(csi2_enable, i, 1);
-			}
-		}
-	} else {
-		bitmap_fill(csi2_enable, 32);
-	}
 
 	isys->csi2 = devm_kcalloc(&isys->adev->dev, csi2->nports,
 				  sizeof(*isys->csi2), GFP_KERNEL);
@@ -264,9 +231,6 @@ static int isys_register_subdevices(struct ipu_isys *isys)
 	}
 
 	for (i = 0; i < csi2->nports; i++) {
-		if (!test_bit(i, csi2_enable))
-			continue;
-
 		rval = ipu_isys_csi2_init(&isys->csi2[i], isys,
 					  isys->pdata->base +
 					  csi2->offsets[i], i);
@@ -276,111 +240,32 @@ static int isys_register_subdevices(struct ipu_isys *isys)
 		isys->isr_csi2_bits |= IPU_ISYS_UNISPART_IRQ_CSI2(i);
 	}
 
-	isys->tpg = devm_kcalloc(&isys->adev->dev, tpg->ntpgs,
-				 sizeof(*isys->tpg), GFP_KERNEL);
-	if (!isys->tpg) {
-		rval = -ENOMEM;
-		goto fail;
-	}
-
-	for (i = 0; i < tpg->ntpgs; i++) {
-		rval = ipu_isys_tpg_init(&isys->tpg[i], isys,
-					 isys->pdata->base +
-					 tpg->offsets[i],
-					 tpg->sels ? (isys->pdata->base +
-						      tpg->sels[i]) : NULL, i);
-		if (rval)
+	for (k = 0; k < NR_OF_CSI2_BE_SOC_DEV; k++) {
+		rval = ipu_isys_csi2_be_soc_init(&isys->csi2_be_soc[k],
+						 isys, k);
+		if (rval) {
+			dev_info(&isys->adev->dev,
+				 "can't register csi2 soc be device %d\n", k);
 			goto fail;
-	}
-
-	rval = ipu_isys_csi2_be_soc_init(&isys->csi2_be_soc, isys);
-	if (rval) {
-		dev_info(&isys->adev->dev,
-			 "can't register soc csi2 be device\n");
-		goto fail;
-	}
-
-	rval = ipu_isys_csi2_be_init(&isys->csi2_be, isys);
-	if (rval) {
-		dev_info(&isys->adev->dev,
-			 "can't register raw csi2 be device\n");
-		goto fail;
-	}
-	rval = ipu_isys_isa_init(&isys->isa, isys, NULL);
-	if (rval) {
-		dev_info(&isys->adev->dev, "can't register isa device\n");
-		goto fail;
+		}
 	}
 
 	for (i = 0; i < csi2->nports; i++) {
-		if (!test_bit(i, csi2_enable))
-			continue;
-
-		for (j = CSI2_PAD_SOURCE(0);
-		     j < (NR_OF_CSI2_SOURCE_PADS + CSI2_PAD_SOURCE(0)); j++) {
+		for (k = 0; k < NR_OF_CSI2_BE_SOC_DEV; k++) {
+			csi2_be_soc = &isys->csi2_be_soc[k];
 			rval =
 			    media_create_pad_link(&isys->csi2[i].asd.sd.entity,
-						  j,
-						  &isys->csi2_be.asd.sd.entity,
-						  CSI2_BE_PAD_SINK, 0);
+						  CSI2_PAD_SOURCE,
+						  &csi2_be_soc->asd.sd.entity,
+						  CSI2_BE_SOC_PAD_SINK, 0);
 			if (rval) {
 				dev_info(&isys->adev->dev,
-					 "can't create link csi2 <=> csi2_be\n");
-				goto fail;
-			}
-
-			for (k = CSI2_BE_SOC_PAD_SINK(0);
-			     k < NR_OF_CSI2_BE_SOC_SINK_PADS; k++) {
-				rval =
-				    media_create_pad_link(&isys->csi2[i].asd.sd.
-							  entity, j,
-							  &isys->csi2_be_soc.
-							  asd.sd.entity, k,
-							  MEDIA_LNK_FL_DYNAMIC);
-				if (rval) {
-					dev_info(&isys->adev->dev,
-						 "can't create link csi2->be_soc\n");
-					goto fail;
-				}
-			}
-		}
-	}
-
-	for (i = 0; i < tpg->ntpgs; i++) {
-		rval = media_create_pad_link(&isys->tpg[i].asd.sd.entity,
-					     TPG_PAD_SOURCE,
-					     &isys->csi2_be.asd.sd.entity,
-					     CSI2_BE_PAD_SINK, 0);
-		if (rval) {
-			dev_info(&isys->adev->dev,
-				 "can't create link between tpg and csi2_be\n");
-			goto fail;
-		}
-
-		for (k = CSI2_BE_SOC_PAD_SINK(0);
-		     k < NR_OF_CSI2_BE_SOC_SINK_PADS; k++) {
-			rval =
-			    media_create_pad_link(&isys->tpg[i].asd.sd.entity,
-						  TPG_PAD_SOURCE,
-						  &isys->csi2_be_soc.asd.sd.
-						  entity, k,
-						  MEDIA_LNK_FL_DYNAMIC);
-			if (rval) {
-				dev_info(&isys->adev->dev,
-					 "can't create link tpg->be_soc\n");
+					 "can't create link csi2->be_soc\n");
 				goto fail;
 			}
 		}
 	}
 
-	rval = media_create_pad_link(&isys->csi2_be.asd.sd.entity,
-				     CSI2_BE_PAD_SOURCE,
-				     &isys->isa.asd.sd.entity, ISA_PAD_SINK, 0);
-	if (rval) {
-		dev_info(&isys->adev->dev,
-			 "can't create link between CSI2 raw be and ISA\n");
-		goto fail;
-	}
 	return 0;
 
 fail:
@@ -394,6 +279,42 @@ static struct media_device_ops isys_mdev_ops = {
 	.req_free = ipu_isys_req_free,
 	.req_queue = ipu_isys_req_queue,
 };
+
+static int isys_iwake_watermark_init(struct ipu_isys *isys)
+{
+	struct isys_iwake_watermark *iwake_watermark;
+
+	if (isys->iwake_watermark)
+		return 0;
+
+	iwake_watermark = devm_kzalloc(&isys->adev->dev,
+				       sizeof(*iwake_watermark), GFP_KERNEL);
+	if (!iwake_watermark)
+		return -ENOMEM;
+	INIT_LIST_HEAD(&iwake_watermark->video_list);
+	mutex_init(&iwake_watermark->mutex);
+
+	iwake_watermark->ltrdid.lut_ltr.value = 0;
+	isys->iwake_watermark = iwake_watermark;
+	iwake_watermark->isys = isys;
+	iwake_watermark->iwake_enabled = false;
+	iwake_watermark->force_iwake_disable = false;
+	return 0;
+}
+
+static int isys_iwake_watermark_cleanup(struct ipu_isys *isys)
+{
+	struct isys_iwake_watermark *iwake_watermark = isys->iwake_watermark;
+
+	if (!iwake_watermark)
+		return -EINVAL;
+	mutex_lock(&iwake_watermark->mutex);
+	list_del(&iwake_watermark->video_list);
+	mutex_unlock(&iwake_watermark->mutex);
+	mutex_destroy(&iwake_watermark->mutex);
+	isys->iwake_watermark = NULL;
+	return 0;
+}
 
 /* The .bound() notifier callback when a match is found */
 static int isys_notifier_bound(struct v4l2_async_notifier *notifier,
@@ -677,29 +598,19 @@ static void isys_remove(struct ipu_bus_device *adev)
 {
 	struct ipu_isys *isys = ipu_bus_get_drvdata(adev);
 	struct ipu_device *isp = adev->isp;
-	struct isys_fw_msgs *fwmsg, *safe;
 
 	dev_info(&adev->dev, "removed\n");
+#ifdef CONFIG_DEBUG_FS
 	if (isp->ipu_dir)
 		debugfs_remove_recursive(isys->debugfsdir);
+#endif
 
-	list_for_each_entry_safe(fwmsg, safe, &isys->framebuflist, head) {
-		dma_free_attrs(&adev->dev, sizeof(struct isys_fw_msgs),
-			       fwmsg, fwmsg->dma_addr,
-			       0
-		    );
-	}
-
-	list_for_each_entry_safe(fwmsg, safe, &isys->framebuflist_fw, head) {
-		dma_free_attrs(&adev->dev, sizeof(struct isys_fw_msgs),
-			       fwmsg, fwmsg->dma_addr,
-			       0
-		    );
-	}
+	isys_iwake_watermark_cleanup(isys);
 
 	ipu_trace_uninit(&adev->dev);
-	isys_unregister_devices(isys);
 	isys_notifier_cleanup(isys);
+	isys_unregister_devices(isys);
+
 	cpu_latency_qos_remove_request(&isys->pm_qos);
 
 	if (!isp->secure_mode) {
@@ -715,10 +626,10 @@ static void isys_remove(struct ipu_bus_device *adev)
 
 	if (isys->short_packet_source == IPU_ISYS_SHORT_PACKET_FROM_TUNIT) {
 		u32 trace_size = IPU_ISYS_SHORT_PACKET_TRACE_BUFFER_SIZE;
-		unsigned long attrs = 0;
-		dma_free_attrs(&adev->dev, trace_size,
-			       isys->short_packet_trace_buffer,
-			       isys->short_packet_trace_buffer_dma_addr, attrs);
+
+		dma_free_coherent(&adev->dev, trace_size,
+				  isys->short_packet_trace_buffer,
+				  isys->short_packet_trace_buffer_dma_addr);
 	}
 }
 
@@ -769,43 +680,46 @@ err:
 	return -ENOMEM;
 }
 
-static int alloc_fw_msg_buffers(struct ipu_isys *isys, int amount)
+static int alloc_fw_msg_bufs(struct ipu_isys_pipeline *ip, int amount)
 {
+	struct ipu_isys_video *pipe_av =
+		container_of(ip, struct ipu_isys_video, ip);
+	struct ipu_isys *isys;
 	dma_addr_t dma_addr;
 	struct isys_fw_msgs *addr;
 	unsigned int i;
 	unsigned long flags;
 
+	isys = pipe_av->isys;
+
 	for (i = 0; i < amount; i++) {
 		addr = dma_alloc_attrs(&isys->adev->dev,
 				       sizeof(struct isys_fw_msgs),
 				       &dma_addr, GFP_KERNEL,
-				       0
-		    );
+				       0);
 		if (!addr)
 			break;
 		addr->dma_addr = dma_addr;
 
-		spin_lock_irqsave(&isys->listlock, flags);
-		list_add(&addr->head, &isys->framebuflist);
-		spin_unlock_irqrestore(&isys->listlock, flags);
+		spin_lock_irqsave(&ip->listlock, flags);
+		list_add(&addr->head, &ip->framebuflist);
+		spin_unlock_irqrestore(&ip->listlock, flags);
 	}
 	if (i == amount)
 		return 0;
-	spin_lock_irqsave(&isys->listlock, flags);
-	while (!list_empty(&isys->framebuflist)) {
-		addr = list_first_entry(&isys->framebuflist,
+	spin_lock_irqsave(&ip->listlock, flags);
+	while (!list_empty(&ip->framebuflist)) {
+		addr = list_first_entry(&ip->framebuflist,
 					struct isys_fw_msgs, head);
 		list_del(&addr->head);
-		spin_unlock_irqrestore(&isys->listlock, flags);
+		spin_unlock_irqrestore(&ip->listlock, flags);
 		dma_free_attrs(&isys->adev->dev,
 			       sizeof(struct isys_fw_msgs),
 			       addr, addr->dma_addr,
-			       0
-		    );
-		spin_lock_irqsave(&isys->listlock, flags);
+			       0);
+		spin_lock_irqsave(&ip->listlock, flags);
 	}
-	spin_unlock_irqrestore(&isys->listlock, flags);
+	spin_unlock_irqrestore(&ip->listlock, flags);
 	return -ENOMEM;
 }
 
@@ -819,23 +733,23 @@ struct isys_fw_msgs *ipu_get_fw_msg_buf(struct ipu_isys_pipeline *ip)
 
 	isys = pipe_av->isys;
 
-	spin_lock_irqsave(&isys->listlock, flags);
-	if (list_empty(&isys->framebuflist)) {
-		spin_unlock_irqrestore(&isys->listlock, flags);
+	spin_lock_irqsave(&ip->listlock, flags);
+	if (list_empty(&ip->framebuflist)) {
+		spin_unlock_irqrestore(&ip->listlock, flags);
 		dev_dbg(&isys->adev->dev, "Frame list empty - Allocate more");
 
-		alloc_fw_msg_buffers(isys, 5);
+		alloc_fw_msg_bufs(ip, 5);
 
-		spin_lock_irqsave(&isys->listlock, flags);
-		if (list_empty(&isys->framebuflist)) {
+		spin_lock_irqsave(&ip->listlock, flags);
+		if (list_empty(&ip->framebuflist)) {
+			spin_unlock_irqrestore(&ip->listlock, flags);
 			dev_err(&isys->adev->dev, "Frame list empty");
-			spin_unlock_irqrestore(&isys->listlock, flags);
 			return NULL;
 		}
 	}
-	msg = list_last_entry(&isys->framebuflist, struct isys_fw_msgs, head);
-	list_move(&msg->head, &isys->framebuflist_fw);
-	spin_unlock_irqrestore(&isys->listlock, flags);
+	msg = list_last_entry(&ip->framebuflist, struct isys_fw_msgs, head);
+	list_move(&msg->head, &ip->framebuflist_fw);
+	spin_unlock_irqrestore(&ip->listlock, flags);
 	memset(&msg->fw_msg, 0, sizeof(msg->fw_msg));
 
 	return msg;
@@ -845,95 +759,97 @@ void ipu_cleanup_fw_msg_bufs(struct ipu_isys *isys)
 {
 	struct isys_fw_msgs *fwmsg, *fwmsg0;
 	unsigned long flags;
+	int i;
 
-	spin_lock_irqsave(&isys->listlock, flags);
-	list_for_each_entry_safe(fwmsg, fwmsg0, &isys->framebuflist_fw, head)
-		list_move(&fwmsg->head, &isys->framebuflist);
-	spin_unlock_irqrestore(&isys->listlock, flags);
+	for (i = 0; i < IPU_ISYS_MAX_STREAMS; i++) {
+		struct ipu_isys_pipeline *pipe = isys->pipes[i];
+
+		if (!pipe)
+			continue;
+
+		spin_lock_irqsave(&pipe->listlock, flags);
+		list_for_each_entry_safe(fwmsg, fwmsg0,
+					 &pipe->framebuflist_fw, head)
+			list_move(&fwmsg->head, &pipe->framebuflist);
+		spin_unlock_irqrestore(&pipe->listlock, flags);
+	}
 }
 
-void ipu_put_fw_mgs_buffer(struct ipu_isys *isys, u64 data)
+void ipu_put_fw_msg_buf(struct ipu_isys_pipeline *ip, u64 data)
 {
 	struct isys_fw_msgs *msg;
+	unsigned long flags;
 	u64 *ptr = (u64 *)(unsigned long)data;
 
 	if (!ptr)
 		return;
 
-	spin_lock(&isys->listlock);
+	spin_lock_irqsave(&ip->listlock, flags);
 	msg = container_of(ptr, struct isys_fw_msgs, fw_msg.dummy);
-	list_move(&msg->head, &isys->framebuflist);
-	spin_unlock(&isys->listlock);
+	list_move(&msg->head, &ip->framebuflist);
+	spin_unlock_irqrestore(&ip->listlock, flags);
 }
-EXPORT_SYMBOL_GPL(ipu_put_fw_mgs_buffer);
+EXPORT_SYMBOL_GPL(ipu_put_fw_msg_buf);
 
 static int isys_probe(struct ipu_bus_device *adev)
 {
 	struct ipu_isys *isys;
 	struct ipu_device *isp = adev->isp;
-#if defined(CONFIG_VIDEO_INTEL_IPU4) || defined(CONFIG_VIDEO_INTEL_IPU4P)
-	const u32 trace_size = IPU_ISYS_SHORT_PACKET_TRACE_BUFFER_SIZE;
-	dma_addr_t *trace_dma_addr;
-	unsigned long attrs;
-#endif
 	const struct firmware *fw;
 	int rval = 0;
-
-	trace_printk("B|%d|TMWK\n", current->pid);
-
-	/* Has the domain been attached? */
-	if (!isp->secure_mode && !isp->pkg_dir_dma_addr) {
-		trace_printk("E|TMWK\n");
-		return -EPROBE_DEFER;
-	}
 
 	isys = devm_kzalloc(&adev->dev, sizeof(*isys), GFP_KERNEL);
 	if (!isys)
 		return -ENOMEM;
 
+	rval = ipu_mmu_hw_init(adev->mmu);
+	if (rval)
+		return rval;
+
 	/* By default, short packet is captured from T-Unit. */
-#if defined(CONFIG_VIDEO_INTEL_IPU4) || defined(CONFIG_VIDEO_INTEL_IPU4P)
-	isys->short_packet_source = IPU_ISYS_SHORT_PACKET_FROM_TUNIT;
-	trace_dma_addr = &isys->short_packet_trace_buffer_dma_addr;
-	mutex_init(&isys->short_packet_tracing_mutex);
-	isys->short_packet_trace_buffer =
-	    dma_alloc_attrs(&adev->dev, trace_size, trace_dma_addr,
-			    GFP_KERNEL, attrs);
-	if (!isys->short_packet_trace_buffer)
-		return -ENOMEM;
-#else
 	isys->short_packet_source = IPU_ISYS_SHORT_PACKET_FROM_RECEIVER;
-#endif
 	isys->adev = adev;
 	isys->pdata = adev->pdata;
+
+	/* initial streamID for different sensor types */
+	isys->sensor_info.vc1_data_start =
+		IPU_FW_ISYS_VC1_SENSOR_DATA_START;
+	isys->sensor_info.vc1_data_end =
+		IPU_FW_ISYS_VC1_SENSOR_DATA_END;
+	isys->sensor_info.vc0_data_start =
+		IPU_FW_ISYS_VC0_SENSOR_DATA_START;
+	isys->sensor_info.vc0_data_end =
+		IPU_FW_ISYS_VC0_SENSOR_DATA_END;
+	isys->sensor_info.vc1_pdaf_start =
+		IPU_FW_ISYS_VC1_SENSOR_PDAF_START;
+	isys->sensor_info.vc1_pdaf_end =
+		IPU_FW_ISYS_VC1_SENSOR_PDAF_END;
+	isys->sensor_info.sensor_metadata =
+		IPU_FW_ISYS_SENSOR_METADATA;
+
+	isys->sensor_types[IPU_FW_ISYS_VC1_SENSOR_DATA] =
+		IPU_FW_ISYS_VC1_SENSOR_DATA_START;
+	isys->sensor_types[IPU_FW_ISYS_VC1_SENSOR_PDAF] =
+		IPU_FW_ISYS_VC1_SENSOR_PDAF_START;
+	isys->sensor_types[IPU_FW_ISYS_VC0_SENSOR_DATA] =
+		IPU_FW_ISYS_VC0_SENSOR_DATA_START;
 
 	INIT_LIST_HEAD(&isys->requests);
 
 	spin_lock_init(&isys->lock);
 	spin_lock_init(&isys->power_lock);
 	isys->power = 0;
+	isys->phy_termcal_val = 0;
 
 	mutex_init(&isys->mutex);
 	mutex_init(&isys->stream_mutex);
 	mutex_init(&isys->lib_mutex);
 
-	spin_lock_init(&isys->listlock);
-	INIT_LIST_HEAD(&isys->framebuflist);
-	INIT_LIST_HEAD(&isys->framebuflist_fw);
-
-	dev_info(&adev->dev, "isys probe %p %p\n", adev, &adev->dev);
+	dev_dbg(&adev->dev, "isys probe %p %p\n", adev, &adev->dev);
 	ipu_bus_set_drvdata(adev, isys);
 
 	isys->line_align = IPU_ISYS_2600_MEM_LINE_ALIGN;
-#ifdef CONFIG_VIDEO_INTEL_IPU4
-	isys->icache_prefetch = is_ipu_hw_bxtp_e0(isp);
-#else
 	isys->icache_prefetch = 0;
-#endif
-
-#ifndef CONFIG_PM
-	isys_setup_hw(isys);
-#endif
 
 	if (!isp->secure_mode) {
 		fw = isp->cpd_fw;
@@ -941,38 +857,43 @@ static int isys_probe(struct ipu_bus_device *adev)
 		if (rval)
 			goto release_firmware;
 
-		isys->pkg_dir = ipu_cpd_create_pkg_dir(adev, isp->cpd_fw->data,
-						       sg_dma_address(isys->
-								      fw_sgt.
-								      sgl),
-						       &isys->pkg_dir_dma_addr,
-						       &isys->pkg_dir_size);
+		isys->pkg_dir =
+		    ipu_cpd_create_pkg_dir(adev, isp->cpd_fw->data,
+					   sg_dma_address(isys->fw_sgt.sgl),
+					   &isys->pkg_dir_dma_addr,
+					   &isys->pkg_dir_size);
 		if (!isys->pkg_dir) {
 			rval = -ENOMEM;
 			goto remove_shared_buffer;
 		}
 	}
 
+#ifdef CONFIG_DEBUG_FS
 	/* Debug fs failure is not fatal. */
 	ipu_isys_init_debugfs(isys);
+#endif
 
 	ipu_trace_init(adev->isp, isys->pdata->base, &adev->dev,
 		       isys_trace_blocks);
 
 	cpu_latency_qos_add_request(&isys->pm_qos, PM_QOS_DEFAULT_VALUE);
-	alloc_fw_msg_buffers(isys, 20);
-
-	pm_runtime_allow(&adev->dev);
-	pm_runtime_enable(&adev->dev);
 
 	rval = isys_register_devices(isys);
 	if (rval)
 		goto out_remove_pkg_dir_shared_buffer;
+	rval = isys_iwake_watermark_init(isys);
+	if (rval)
+		goto out_unregister_devices;
 
-	trace_printk("E|TMWK\n");
+	ipu_mmu_hw_cleanup(adev->mmu);
+
 	return 0;
 
+out_unregister_devices:
+	isys_iwake_watermark_cleanup(isys);
+	isys_unregister_devices(isys);
 out_remove_pkg_dir_shared_buffer:
+	cpu_latency_qos_remove_request(&isys->pm_qos);
 	if (!isp->secure_mode)
 		ipu_cpd_free_pkg_dir(adev, isys->pkg_dir,
 				     isys->pkg_dir_dma_addr,
@@ -985,20 +906,13 @@ release_firmware:
 		release_firmware(isys->fw);
 	ipu_trace_uninit(&adev->dev);
 
-	trace_printk("E|TMWK\n");
-
 	mutex_destroy(&isys->mutex);
 	mutex_destroy(&isys->stream_mutex);
 
-	if (isys->short_packet_source == IPU_ISYS_SHORT_PACKET_FROM_TUNIT) {
+	if (isys->short_packet_source == IPU_ISYS_SHORT_PACKET_FROM_TUNIT)
 		mutex_destroy(&isys->short_packet_tracing_mutex);
-#if defined(CONFIG_VIDEO_INTEL_IPU4) || defined(CONFIG_VIDEO_INTEL_IPU4P)
-		dma_free_attrs(&adev->dev, trace_size,
-			       isys->short_packet_trace_buffer,
-			       isys->short_packet_trace_buffer_dma_addr,
-			       attrs);
-#endif
-	}
+
+	ipu_mmu_hw_cleanup(adev->mmu);
 
 	return rval;
 }
@@ -1056,7 +970,7 @@ int isys_isr_one(struct ipu_bus_device *adev)
 	if (!resp)
 		return 1;
 
-	ts = (u64) resp->timestamp[1] << 32 | resp->timestamp[0];
+	ts = (u64)resp->timestamp[1] << 32 | resp->timestamp[0];
 
 	if (resp->error_info.error == IPU_FW_ISYS_ERROR_STREAM_IN_SUSPENSION)
 		/* Suspension is kind of special case: not enough buffers */
@@ -1102,7 +1016,6 @@ int isys_isr_one(struct ipu_bus_device *adev)
 
 	switch (resp->type) {
 	case IPU_FW_ISYS_RESP_TYPE_STREAM_OPEN_DONE:
-		ipu_put_fw_mgs_buffer(ipu_bus_get_drvdata(adev), resp->buf_id);
 		complete(&pipe->stream_open_completion);
 		break;
 	case IPU_FW_ISYS_RESP_TYPE_STREAM_CLOSE_ACK:
@@ -1112,7 +1025,6 @@ int isys_isr_one(struct ipu_bus_device *adev)
 		complete(&pipe->stream_start_completion);
 		break;
 	case IPU_FW_ISYS_RESP_TYPE_STREAM_START_AND_CAPTURE_ACK:
-		ipu_put_fw_mgs_buffer(ipu_bus_get_drvdata(adev), resp->buf_id);
 		complete(&pipe->stream_start_completion);
 		break;
 	case IPU_FW_ISYS_RESP_TYPE_STREAM_STOP_ACK:
@@ -1122,6 +1034,11 @@ int isys_isr_one(struct ipu_bus_device *adev)
 		complete(&pipe->stream_stop_completion);
 		break;
 	case IPU_FW_ISYS_RESP_TYPE_PIN_DATA_READY:
+		/*
+		 * firmware only release the capture msg until software
+		 * get pin_data_ready event
+		 */
+		ipu_put_fw_msg_buf(pipe, resp->buf_id);
 		if (resp->pin_id < IPU_ISYS_OUTPUT_PINS &&
 		    pipe->output_pins[resp->pin_id].pin_ready)
 			pipe->output_pins[resp->pin_id].pin_ready(pipe, resp);
@@ -1129,10 +1046,11 @@ int isys_isr_one(struct ipu_bus_device *adev)
 			dev_err(&adev->dev,
 				"%d:No data pin ready handler for pin id %d\n",
 				resp->stream_handle, resp->pin_id);
+		if (pipe->csi2)
+			ipu_isys_csi2_error(pipe->csi2);
+
 		break;
 	case IPU_FW_ISYS_RESP_TYPE_STREAM_CAPTURE_ACK:
-		ipu_put_fw_mgs_buffer(ipu_bus_get_drvdata(adev), resp->buf_id);
-		complete(&pipe->capture_ack_completion);
 		break;
 	case IPU_FW_ISYS_RESP_TYPE_STREAM_START_AND_CAPTURE_DONE:
 	case IPU_FW_ISYS_RESP_TYPE_STREAM_CAPTURE_DONE:
@@ -1140,13 +1058,13 @@ int isys_isr_one(struct ipu_bus_device *adev)
 			struct ipu_isys_buffer *ib, *ib_safe;
 			struct list_head list;
 			unsigned long flags;
+			unsigned int *ts = resp->timestamp;
 
 			if (pipe->isys->short_packet_source ==
 			    IPU_ISYS_SHORT_PACKET_FROM_TUNIT)
 				pipe->cur_field =
-				    ipu_isys_csi2_get_current_field(pipe,
-								    resp->
-								    timestamp);
+				    ipu_isys_csi2_get_current_field(pipe, ts);
+
 			/*
 			 * Move the pending buffers to a local temp list.
 			 * Then we do not need to handle the lock during
@@ -1176,6 +1094,9 @@ int isys_isr_one(struct ipu_bus_device *adev)
 
 		break;
 	case IPU_FW_ISYS_RESP_TYPE_FRAME_SOF:
+		if (pipe->csi2)
+			ipu_isys_csi2_sof_event(pipe->csi2);
+
 		pipe->seq[pipe->seq_index].sequence =
 		    atomic_read(&pipe->sequence) - 1;
 		pipe->seq[pipe->seq_index].timestamp = ts;
@@ -1187,7 +1108,8 @@ int isys_isr_one(struct ipu_bus_device *adev)
 		    % IPU_ISYS_MAX_PARALLEL_SOF;
 		break;
 	case IPU_FW_ISYS_RESP_TYPE_FRAME_EOF:
-
+		if (pipe->csi2)
+			ipu_isys_csi2_eof_event(pipe->csi2);
 
 		dev_dbg(&adev->dev,
 			"eof: handle %d: (index %u), timestamp 0x%16.16llx\n",

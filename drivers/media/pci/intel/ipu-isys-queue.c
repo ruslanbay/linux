@@ -617,7 +617,7 @@ static int ipu_isys_stream_start(struct ipu_isys_pipeline *ip,
 					buf, to_dma_addr(msg),
 					sizeof(*buf),
 					IPU_FW_ISYS_SEND_TYPE_STREAM_CAPTURE);
-		ipu_put_fw_mgs_buffer(pipe_av->isys, (uintptr_t) buf);
+		ipu_put_fw_msg_buf(ip, (uintptr_t) buf);
 	} while (!WARN_ON(rval));
 
 	return 0;
@@ -738,7 +738,7 @@ static void __buf_queue(struct vb2_buffer *vb, bool force)
 				       buf, to_dma_addr(msg),
 				       sizeof(*buf),
 				       IPU_FW_ISYS_SEND_TYPE_STREAM_CAPTURE);
-	ipu_put_fw_mgs_buffer(pipe_av->isys, (uintptr_t) buf);
+	ipu_put_fw_msg_buf(ip, (uintptr_t) buf);
 	/*
 	 * FIXME: mark the buffers in the buffer list if the queue
 	 * operation fails.
@@ -1265,7 +1265,7 @@ ipu_isys_req_dispatch(struct media_device *mdev,
 				       ip->stream_handle,
 				       set, dma_addr, sizeof(*set),
 				       IPU_FW_ISYS_SEND_TYPE_STREAM_CAPTURE);
-	ipu_put_fw_mgs_buffer(pipe_av->isys, (uintptr_t) set);
+	ipu_put_fw_msg_buf(ip, (uintptr_t) set);
 
 	WARN_ON(rval);
 }

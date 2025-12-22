@@ -1391,6 +1391,93 @@ static int media_pipeline_start_by_vc(struct ipu_isys_video *av,
 	return ret;
 }
 
+void
+ipu_isys_prepare_fw_cfg_default(struct ipu_isys_video *av,
+				struct ipu_fw_isys_stream_cfg_data_abi *cfg)
+{
+	struct media_pipeline *mp = media_entity_pipeline(&av->vdev.entity);
+	struct ipu_isys_pipeline *ip = to_ipu_isys_pipeline(mp);
+	struct ipu_isys_queue *aq = &av->aq;
+	struct ipu_fw_isys_output_pin_info_abi *pin_info;
+	struct ipu_isys *isys = av->isys;
+	unsigned int type_index, type;
+	int pin = cfg->nof_output_pins++;
+
+	aq->fw_output = pin;
+	ip->output_pins[pin].pin_ready = ipu_isys_queue_buf_ready;
+	ip->output_pins[pin].aq = aq;
+
+	pin_info = &cfg->output_pins[pin];
+	pin_info->input_pin_id = 0;
+	pin_info->output_res.width = av->mpix.width;
+	pin_info->output_res.height = av->mpix.height;
+
+	if (!av->pfmt->bpp_planar)
+		pin_info->stride = av->mpix.plane_fmt[0].bytesperline;
+	else
+		pin_info->stride = ALIGN(DIV_ROUND_UP(av->mpix.width *
+						      av->pfmt->bpp_planar,
+						      BITS_PER_BYTE),
+					 av->isys->line_align);
+
+	pin_info->pt = aq->css_pin_type;
+	pin_info->ft = av->pfmt->css_pixelformat;
+	pin_info->send_irq = 1;
+	memset(pin_info->ts_offsets, 0, sizeof(pin_info->ts_offsets));
+	pin_info->s2m_pixel_soc_pixel_remapping =
+	    S2M_PIXEL_SOC_PIXEL_REMAPPING_FLAG_NO_REMAPPING;
+	pin_info->csi_be_soc_pixel_remapping =
+	    CSI_BE_SOC_PIXEL_REMAPPING_FLAG_NO_REMAPPING;
+	cfg->vc = 0;
+
+	switch (pin_info->pt) {
+	/* non-snoopable sensor data to PSYS */
+	case IPU_FW_ISYS_PIN_TYPE_RAW_NS:
+		type_index = IPU_FW_ISYS_VC1_SENSOR_DATA;
+		pin_info->sensor_type = isys->sensor_types[type_index]++;
+		pin_info->snoopable = false;
+		pin_info->error_handling_enable = false;
+		type = isys->sensor_types[type_index];
+		if (type > isys->sensor_info.vc1_data_end)
+			isys->sensor_types[type_index] =
+				isys->sensor_info.vc1_data_start;
+
+		break;
+	/* snoopable META/Stats data to CPU */
+	case IPU_FW_ISYS_PIN_TYPE_METADATA_0:
+	case IPU_FW_ISYS_PIN_TYPE_METADATA_1:
+		pin_info->sensor_type = isys->sensor_info.sensor_metadata;
+		pin_info->snoopable = true;
+		pin_info->error_handling_enable = false;
+		break;
+	case IPU_FW_ISYS_PIN_TYPE_RAW_SOC:
+	case IPU_FW_ISYS_PIN_TYPE_MIPI:
+		type_index = IPU_FW_ISYS_VC1_SENSOR_DATA;
+		pin_info->sensor_type = isys->sensor_types[type_index]++;
+		pin_info->snoopable = false;
+		pin_info->error_handling_enable = false;
+		type = isys->sensor_types[type_index];
+		if (type > isys->sensor_info.vc1_data_end)
+			isys->sensor_types[type_index] =
+				isys->sensor_info.vc1_data_start;
+
+		break;
+
+	default:
+		dev_err(&av->isys->adev->dev,
+			"Unknown pin type, use metadata type as default\n");
+
+		pin_info->sensor_type = isys->sensor_info.sensor_metadata;
+		pin_info->snoopable = true;
+		pin_info->error_handling_enable = false;
+	}
+	if (av->compression) {
+		pin_info->payload_buf_size = av->mpix.plane_fmt[0].sizeimage;
+		pin_info->reserve_compression = av->compression;
+		pin_info->ts_offsets[0] = av->ts_offsets[0];
+	}
+}
+
 static unsigned int ipu_isys_get_compression_scheme(u32 code)
 {
 	switch (code) {
@@ -1566,7 +1653,7 @@ static int start_stream_firmware(struct ipu_isys_video *av,
 				       to_dma_addr(msg),
 				       sizeof(*stream_cfg),
 				       IPU_FW_ISYS_SEND_TYPE_STREAM_OPEN);
-	ipu_put_fw_mgs_buffer(av->isys, (uintptr_t) stream_cfg);
+	ipu_put_fw_msg_buf(ip, (uintptr_t) stream_cfg);
 
 	if (rval < 0) {
 		dev_err(dev, "can't open stream (%d)\n", rval);
@@ -1621,7 +1708,7 @@ static int start_stream_firmware(struct ipu_isys_video *av,
 				buf, to_dma_addr(msg),
 				sizeof(*buf),
 				IPU_FW_ISYS_SEND_TYPE_STREAM_START_AND_CAPTURE);
-		ipu_put_fw_mgs_buffer(av->isys, (uintptr_t) buf);
+		ipu_put_fw_msg_buf(ip, (uintptr_t) buf);
 	} else {
 		rval = ipu_fw_isys_simple_cmd(av->isys,
 					ip->stream_handle,
@@ -1904,14 +1991,26 @@ int ipu_isys_video_set_streaming(struct ipu_isys_video *av,
 	struct media_entity_enum entities;
 
 	struct media_entity *entity, *entity2;
-	struct ipu_isys_pipeline *ip =
-	    to_ipu_isys_pipeline(media_entity_pipeline(&av->vdev.entity));
+	struct media_pipeline *mp = media_entity_pipeline(&av->vdev.entity);
+	struct ipu_isys_pipeline *ip = to_ipu_isys_pipeline(mp);
 	struct v4l2_subdev *sd, *esd;
 	int rval = 0;
 
 	dev_dbg(dev, "set stream: %d\n", state);
 
+	if (!ip) {
+		dev_err(dev, "%s no pipeline found for %s\n", __func__,
+			av->vdev.name);
+		return -ENODEV;
+	}
+
+	if (!ip->external) {
+		dev_err(dev, "no media pad found for %s\n", av->vdev.name);
+		return -ENODEV;
+	}
+
 	if (!ip->external->entity) {
+		dev_err(dev, "no entify found for %s\n", av->vdev.name);
 		WARN_ON(1);
 		return -ENODEV;
 	}
@@ -1930,29 +2029,18 @@ int ipu_isys_video_set_streaming(struct ipu_isys_video *av,
 		stop_streaming_firmware(av);
 
 		/* stop external sub-device now. */
-		dev_err(dev, "s_stream %s (ext)\n", ip->external->entity->name);
+		dev_info(dev, "stream off %s\n", ip->external->entity->name);
 
-		if (ip->csi2) {
-			if (ip->csi2->stream_count == 1) {
-				v4l2_subdev_call(esd, video, s_stream, state);
-#if defined(CONFIG_VIDEO_INTEL_IPU4) || defined(CONFIG_VIDEO_INTEL_IPU4P)
-				ipu_isys_csi2_wait_last_eof(ip->csi2);
-#endif
-			}
-		} else {
-			v4l2_subdev_call(esd, video, s_stream, state);
-		}
+		v4l2_subdev_call(esd, video, s_stream, state);
 	}
 
 	mutex_lock(&mdev->graph_mutex);
 
 	media_graph_walk_start(&ip->graph,
-				      &av->vdev.entity);
+			       &av->vdev.entity);
 
 	while ((entity = media_graph_walk_next(&ip->graph))) {
 		sd = media_entity_to_v4l2_subdev(entity);
-
-		dev_dbg(dev, "set stream: entity %s\n", entity->name);
 
 		/* Non-subdev nodes can be safely ignored here. */
 		if (!is_media_entity_v4l2_subdev(entity))
@@ -1960,11 +2048,12 @@ int ipu_isys_video_set_streaming(struct ipu_isys_video *av,
 
 		/* Don't start truly external devices quite yet. */
 		if (strncmp(sd->name, IPU_ISYS_ENTITY_PREFIX,
-			strlen(IPU_ISYS_ENTITY_PREFIX)) != 0 ||
-			ip->external->entity == entity)
+			    strlen(IPU_ISYS_ENTITY_PREFIX)) != 0 ||
+		    ip->external->entity == entity)
 			continue;
 
-		dev_dbg(dev, "s_stream %s\n", entity->name);
+		dev_dbg(dev, "s_stream %s entity %s\n", state ? "on" : "off",
+			entity->name);
 		rval = v4l2_subdev_call(sd, video, s_stream, state);
 		if (!state)
 			continue;
@@ -1978,34 +2067,29 @@ int ipu_isys_video_set_streaming(struct ipu_isys_video *av,
 
 	mutex_unlock(&mdev->graph_mutex);
 
+	if (av->aq.css_pin_type == IPU_FW_ISYS_PIN_TYPE_RAW_SOC) {
+		if (state)
+			configure_stream_watermark(av);
+		update_stream_watermark(av, state);
+	}
+
 	/* Oh crap */
 	if (state) {
-		if (ipu_isys_csi2_skew_cal_required(ip->csi2) &&
-		    ip->csi2->remote_streams == ip->csi2->stream_count)
-			perform_skew_cal(ip);
-
 		rval = start_stream_firmware(av, bl);
 		if (rval)
-			goto out_media_entity_stop_streaming;
+			goto out_update_stream_watermark;
 
 		dev_dbg(dev, "set stream: source %d, stream_handle %d\n",
 			ip->source, ip->stream_handle);
 
 		/* Start external sub-device now. */
-		dev_dbg(dev, "set stream: s_stream %s (ext)\n",
-			ip->external->entity->name);
+		dev_info(dev, "stream on %s\n", ip->external->entity->name);
 
-		if (ip->csi2 &&
-		    ip->csi2->remote_streams == ip->csi2->stream_count)
-			rval = v4l2_subdev_call(esd, video, s_stream, state);
-		else if (!ip->csi2)
-			rval = v4l2_subdev_call(esd, video, s_stream, state);
+		rval = v4l2_subdev_call(esd, video, s_stream, state);
 		if (rval)
 			goto out_media_entity_stop_streaming_firmware;
 	} else {
 		close_streaming_firmware(av);
-		av->ip.stream_id = 0;
-		av->ip.vc = 0;
 	}
 
 	if (state)
@@ -2019,11 +2103,15 @@ int ipu_isys_video_set_streaming(struct ipu_isys_video *av,
 out_media_entity_stop_streaming_firmware:
 	stop_streaming_firmware(av);
 
+out_update_stream_watermark:
+	if (av->aq.css_pin_type == IPU_FW_ISYS_PIN_TYPE_RAW_SOC)
+		update_stream_watermark(av, 0);
+
 out_media_entity_stop_streaming:
 	mutex_lock(&mdev->graph_mutex);
 
 	media_graph_walk_start(&ip->graph,
-				      &av->vdev.entity);
+			       &av->vdev.entity);
 
 	while (state && (entity2 = media_graph_walk_next(&ip->graph)) &&
 	       entity2 != entity) {

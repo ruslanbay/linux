@@ -336,11 +336,7 @@ irqreturn_t isys_isr(struct ipu_bus_device *adev)
 int tpg_set_stream(struct v4l2_subdev *sd, int enable)
 {
 	struct ipu_isys_tpg *tpg = to_ipu_isys_tpg(sd);
-#ifdef IPU_VC_SUPPORT
-	__u32 code = tpg->asd.ffmt[TPG_PAD_SOURCE][0].code;
-#else
 	__u32 code = tpg->asd.ffmt[TPG_PAD_SOURCE].code;
-#endif
 	unsigned int bpp = ipu_isys_mbus_code_to_bpp(code);
 
 	/*
@@ -363,16 +359,6 @@ int tpg_set_stream(struct v4l2_subdev *sd, int enable)
 
 	writel(0, tpg->base + MIPI_GEN_REG_SYNG_NOF_FRAMES);
 
-#ifdef IPU_VC_SUPPORT
-	writel(DIV_ROUND_UP(tpg->asd.ffmt[TPG_PAD_SOURCE][0].width *
-				bpp, BITS_PER_BYTE),
-		   tpg->base + MIPI_GEN_REG_COM_WCOUNT);
-	writel(DIV_ROUND_UP(tpg->asd.ffmt[TPG_PAD_SOURCE][0].width,
-				MIPI_GEN_PPC),
-		   tpg->base + MIPI_GEN_REG_SYNG_NOF_PIXELS);
-	writel(tpg->asd.ffmt[TPG_PAD_SOURCE][0].height,
-		   tpg->base + MIPI_GEN_REG_SYNG_NOF_LINES);
-#else
 	writel(DIV_ROUND_UP(tpg->asd.ffmt[TPG_PAD_SOURCE].width *
 				bpp, BITS_PER_BYTE),
 		   tpg->base + MIPI_GEN_REG_COM_WCOUNT);
@@ -381,7 +367,6 @@ int tpg_set_stream(struct v4l2_subdev *sd, int enable)
 		   tpg->base + MIPI_GEN_REG_SYNG_NOF_PIXELS);
 	writel(tpg->asd.ffmt[TPG_PAD_SOURCE].height,
 		   tpg->base + MIPI_GEN_REG_SYNG_NOF_LINES);
-#endif
 
 	writel(0, tpg->base + MIPI_GEN_REG_TPG_MODE);
 	writel(-1, tpg->base + MIPI_GEN_REG_TPG_HCNT_MASK);

@@ -13,6 +13,8 @@
 #define CSI2_UPDATE_TIME_TRY_NUM   3
 #define CSI2_UPDATE_TIME_MAX_DIFF  20
 
+#define IPU_ISYS_SHORT_PACKET_DTYPE_MASK	0x3f
+
 static int ipu4p_csi2_ev_correction_params(struct ipu_isys_csi2
 					   *csi2, unsigned int lanes)
 {
@@ -191,7 +193,7 @@ void ipu_isys_csi2_isr(struct ipu_isys_csi2 *csi2)
 {
 	u32 status = 0;
 #ifdef IPU_VC_SUPPORT
-	unsigned int i, bus;
+	unsigned int bus;
 #else
 	unsigned int bus;
 #endif
@@ -217,20 +219,10 @@ void ipu_isys_csi2_isr(struct ipu_isys_csi2 *csi2)
 	/* register the csi sync error */
 	csi2->receiver_errors |= status & 0xffff;
 	/* handle sof and eof event */
-#ifdef IPU_VC_SUPPORT
-	for (i = 0; i < NR_OF_CSI2_VC; i++) {
-		if (status & CSI2_IRQ_FS_VC(i))
-			ipu_isys_csi2_sof_event(csi2, i);
-
-		if (status & CSI2_IRQ_FE_VC(i))
-			ipu_isys_csi2_eof_event(csi2, i);
-	}
-#else
 	if (status & CSI2_IRQ_FS_VC)
 		ipu_isys_csi2_sof_event(csi2);
 	if (status & CSI2_IRQ_FE_VC)
 		ipu_isys_csi2_eof_event(csi2);
-#endif
 }
 
 static u64 tunit_time_to_us(struct ipu_isys *isys, u64 time)
@@ -325,88 +317,24 @@ unsigned int ipu_isys_csi2_get_current_field(struct ipu_isys_pipeline *ip,
 	struct ipu_isys *isys = av->isys;
 	unsigned int field = V4L2_FIELD_TOP;
 
-	/*
-	 * Find the nearest message that has matched msg type,
-	 * port id, virtual channel and packet type.
-	 */
-	unsigned int i = ip->short_packet_trace_index;
-	bool msg_matched = false;
-	unsigned int monitor_id;
+	struct ipu_isys_buffer *short_packet_ib =
+		list_last_entry(&ip->short_packet_active,
+				struct ipu_isys_buffer, head);
+	struct ipu_isys_private_buffer *pb =
+		ipu_isys_buffer_to_private_buffer(short_packet_ib);
+	struct ipu_isys_mipi_packet_header *ph =
+		(struct ipu_isys_mipi_packet_header *)
+		pb->buffer;
 
-	update_timer_base(isys);
-
-	if (ip->csi2->index >= IPU_ISYS_MAX_CSI2_LEGACY_PORTS)
-		monitor_id = TRACE_REG_CSI2_3PH_TM_MONITOR_ID;
-	else
-		monitor_id = TRACE_REG_CSI2_TM_MONITOR_ID;
-
-	dma_sync_single_for_cpu(&isys->adev->dev,
-				isys->short_packet_trace_buffer_dma_addr,
-				IPU_ISYS_SHORT_PACKET_TRACE_BUFFER_SIZE,
-				DMA_BIDIRECTIONAL);
-
-	do {
-		struct ipu_isys_csi2_monitor_message msg =
-		    isys->short_packet_trace_buffer[i];
-		u64 sof_time = tsc_time_to_tunit_time(isys,
-						      isys->tsc_timer_base,
-						      isys->tunit_timer_base,
-						      (((u64) timestamp[1]) <<
-						       32) | timestamp[0]);
-		u64 trace_time = extract_time_from_short_packet_msg(&msg);
-		u64 delta_time_us = tunit_time_to_us(isys,
-						     (sof_time > trace_time) ?
-						     sof_time - trace_time :
-						     trace_time - sof_time);
-
-		i = (i + 1) % IPU_ISYS_SHORT_PACKET_TRACE_MSG_NUMBER;
-
-		if (msg.cmd == TRACE_REG_CMD_TYPE_D64MTS &&
-		    msg.monitor_id == monitor_id &&
-		    msg.fs == 1 &&
-		    msg.port == ip->csi2->index &&
-#ifdef IPU_VC_SUPPORT
-		    msg.vc == ip->vc &&
-#endif
-		    delta_time_us < IPU_ISYS_SHORT_PACKET_TRACE_MAX_TIMESHIFT) {
-			field = (msg.sequence % 2) ?
-			    V4L2_FIELD_TOP : V4L2_FIELD_BOTTOM;
-			ip->short_packet_trace_index = i;
-			msg_matched = true;
-			dev_dbg(&isys->adev->dev,
-				"Interlaced field ready. field = %d\n", field);
-			break;
-		}
-	} while (i != ip->short_packet_trace_index);
-	if (!msg_matched)
-		/* We have walked through the whole buffer. */
-		dev_dbg(&isys->adev->dev, "No matched trace message found.\n");
+	/* Check if the first SOF packet is received. */
+	if ((ph->dtype & IPU_ISYS_SHORT_PACKET_DTYPE_MASK) != 0)
+		dev_warn(&isys->adev->dev, "First short packet is not SOF.\n");
+	field = (ph->word_count % 2) ? V4L2_FIELD_TOP : V4L2_FIELD_BOTTOM;
+	dev_dbg(&isys->adev->dev,
+		"Interlaced field ready. frame_num = %d field = %d\n",
+		ph->word_count, field);
 
 	return field;
-}
-
-bool ipu_isys_csi2_skew_cal_required(struct ipu_isys_csi2 *csi2)
-{
-	__s64 link_freq;
-	int rval;
-
-	if (!csi2)
-		return false;
-
-#ifdef IPU_VC_SUPPORT
-	/* Not yet ? */
-	if (csi2->remote_streams != csi2->stream_count)
-		return false;
-
-#endif
-	rval = ipu_isys_csi2_get_link_freq(csi2, &link_freq);
-	if (rval)
-		return false;
-
-	if (link_freq <= IPU_SKEW_CAL_LIMIT_HZ)
-		return false;
-
-	return true;
 }
 
 int ipu_isys_csi2_set_skew_cal(struct ipu_isys_csi2 *csi2, int enable)

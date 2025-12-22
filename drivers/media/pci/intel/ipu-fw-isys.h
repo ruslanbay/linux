@@ -148,7 +148,6 @@ enum ipu_fw_isys_stream_source {
 	N_IPU_FW_ISYS_STREAM_SRC
 };
 
-#if !defined(CONFIG_VIDEO_INTEL_IPU4) && !defined(CONFIG_VIDEO_INTEL_IPU4P)
 enum ipu_fw_isys_sensor_type {
 	/* non-snoopable to PSYS */
 	IPU_FW_ISYS_VC1_SENSOR_DATA	= 0,
@@ -191,7 +190,6 @@ enum ipu_fw_isys_sensor_info {
 	IPU_FW_ISYS_VC1_SENSOR_PDAF_START = IPU_FW_ISYS_SENSOR_PDAF_1,
 	IPU_FW_ISYS_VC1_SENSOR_PDAF_END = IPU_FW_ISYS_SENSOR_PDAF_2,
 };
-#endif
 
 #define IPU_FW_ISYS_STREAM_SRC_CSI2_PORT0 IPU_FW_ISYS_STREAM_SRC_PORT_0
 #define IPU_FW_ISYS_STREAM_SRC_CSI2_PORT1 IPU_FW_ISYS_STREAM_SRC_PORT_1
@@ -413,12 +411,10 @@ enum ipu_fw_isys_pin_type {
 	IPU_FW_ISYS_PIN_TYPE_HIST_STATS,
 	/* Used for the PAF FF */
 	IPU_FW_ISYS_PIN_TYPE_PAF_FF,
-#if !defined(CONFIG_VIDEO_INTEL_IPU4) && !defined(CONFIG_VIDEO_INTEL_IPU4P)
 	/* Captured through the SoC path
 	 * (2D mode where odd and even lines are handled separately)
 	 */
 	IPU_FW_ISYS_PIN_TYPE_RAW_DUAL_SOC,
-#endif
 	/* Keep always last and max value */
 	N_IPU_FW_ISYS_PIN_TYPE
 };
@@ -620,12 +616,10 @@ struct ipu_fw_isys_param_pin_abi {
  *		     (enum ipu_fw_isys_mipi_store_mode)
  * @bits_per_pix: native bits per pixel
  * @mapped_dt: actual data type from sensor
-#if !defined(CONFIG_VIDEO_INTEL_IPU4) && !defined(CONFIG_VIDEO_INTEL_IPU4P)
  * @crop_first_and_last_lines    Control whether to crop the
  *                              first and last line of the
  *                              input image. Crop done by HW
  *                              device.
-#endif
  */
 struct ipu_fw_isys_input_pin_info_abi {
 	struct ipu_fw_isys_resolution_abi input_res;
@@ -633,9 +627,7 @@ struct ipu_fw_isys_input_pin_info_abi {
 	u8 mipi_store_mode;
 	u8 bits_per_pix;
 	u8 mapped_dt;
-#if !defined(CONFIG_VIDEO_INTEL_IPU4) && !defined(CONFIG_VIDEO_INTEL_IPU4P)
 	u8 crop_first_and_last_lines;
-#endif
 };
 
 /**

@@ -57,6 +57,12 @@
 #define IPU_ISYS_MAX_WIDTH		16384U
 #define IPU_ISYS_MAX_HEIGHT		16384U
 
+#ifdef CONFIG_IPU_SINGLE_BE_SOC_DEVICE
+#define NR_OF_CSI2_BE_SOC_DEV 1
+#else
+#define NR_OF_CSI2_BE_SOC_DEV 8
+#endif
+
 struct task_struct;
 
 struct ipu_isys_csi2_config {
@@ -67,6 +73,47 @@ struct ipu_isys_csi2_config {
 struct sensor_async_sd {
 	struct v4l2_async_connection asc;
 	struct ipu_isys_csi2_config csi2;
+};
+
+struct ltr_did {
+	union {
+		u32 value;
+		struct {
+			u8 val0;
+			u8 val1;
+			u8 val2;
+			u8 val3;
+		} bits;
+	} lut_ltr;
+	union {
+		u32 value;
+		struct {
+			u8 th0;
+			u8 th1;
+			u8 th2;
+			u8 th3;
+		} bits;
+	} lut_fill_time;
+};
+
+struct isys_iwake_watermark {
+	bool iwake_enabled;
+	bool force_iwake_disable;
+	u32 iwake_threshold;
+	u64 isys_pixelbuffer_datarate;
+	struct ltr_did ltrdid;
+	struct mutex mutex; /* protect whole struct */
+	struct ipu_isys *isys;
+	struct list_head video_list;
+};
+struct ipu_isys_sensor_info {
+	unsigned int vc1_data_start;
+	unsigned int vc1_data_end;
+	unsigned int vc0_data_start;
+	unsigned int vc0_data_end;
+	unsigned int vc1_pdaf_start;
+	unsigned int vc1_pdaf_end;
+	unsigned int sensor_metadata;
 };
 
 /*
@@ -84,6 +131,7 @@ struct sensor_async_sd {
  * @fwcom: fw communication layer private pointer
  *         or optional external library private pointer
  * @line_align: line alignment in memory
+ * @phy_termcal_val: the termination calibration value, only used for DWC PHY
  * @reset_needed: Isys requires d0i0->i3 transition
  * @video_opened: total number of opened file handles on video nodes
  * @mutex: serialise access isys video open/release related operations
@@ -114,16 +162,18 @@ struct ipu_isys {
 	struct ipu_isys_pipeline *pipes[IPU_ISYS_MAX_STREAMS];
 	void *fwcom;
 	unsigned int line_align;
+	u32 phy_termcal_val;
 	bool reset_needed;
 	bool icache_prefetch;
 	bool csi2_cse_ipc_not_supported;
 	unsigned int video_opened;
 	unsigned int stream_opened;
-#if !defined(CONFIG_VIDEO_INTEL_IPU4) && !defined(CONFIG_VIDEO_INTEL_IPU4P)
+	struct ipu_isys_sensor_info sensor_info;
 	unsigned int sensor_types[N_IPU_FW_ISYS_SENSOR_TYPE];
-#endif
 
+#ifdef CONFIG_DEBUG_FS
 	struct dentry *debugfsdir;
+#endif
 	struct mutex mutex;	/* Serialise isys video open/release related */
 	struct mutex stream_mutex;	/* Stream start, stop, queueing reqs */
 	struct mutex lib_mutex;	/* Serialise optional external library mutex */
@@ -134,8 +184,7 @@ struct ipu_isys {
 	struct ipu_isys_tpg *tpg;
 	struct ipu_isys_isa isa;
 	struct ipu_isys_csi2_be csi2_be;
-	struct ipu_isys_csi2_be_soc csi2_be_soc;
-
+	struct ipu_isys_csi2_be_soc csi2_be_soc[NR_OF_CSI2_BE_SOC_DEV];
 	const struct firmware *fw;
 	struct sg_table fw_sgt;
 
@@ -152,10 +201,9 @@ struct ipu_isys {
 	struct mutex short_packet_tracing_mutex;	/* For tracing count */
 	u64 tsc_timer_base;
 	u64 tunit_timer_base;
-	spinlock_t listlock;	/* Protect framebuflist */
-	struct list_head framebuflist;
-	struct list_head framebuflist_fw;
 	struct v4l2_async_notifier notifier;
+	struct isys_iwake_watermark *iwake_watermark;
+
 };
 
 struct isys_fw_msgs {
@@ -173,7 +221,7 @@ struct isys_fw_msgs {
 #define to_dma_addr(a) ((a)->dma_addr)
 
 struct isys_fw_msgs *ipu_get_fw_msg_buf(struct ipu_isys_pipeline *ip);
-void ipu_put_fw_mgs_buffer(struct ipu_isys *isys, u64 data);
+void ipu_put_fw_msg_buf(struct ipu_isys_pipeline *ip, u64 data);
 void ipu_cleanup_fw_msg_bufs(struct ipu_isys *isys);
 
 extern const struct v4l2_ioctl_ops ipu_isys_ioctl_ops;
