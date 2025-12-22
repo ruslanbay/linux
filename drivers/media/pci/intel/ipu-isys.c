@@ -398,33 +398,39 @@ static struct media_device_ops isys_mdev_ops = {
 /* The .bound() notifier callback when a match is found */
 static int isys_notifier_bound(struct v4l2_async_notifier *notifier,
 			       struct v4l2_subdev *sd,
-			       struct v4l2_async_subdev *asd)
+			       struct v4l2_async_connection *asc)
 {
-	struct ipu_isys *isys =
-		container_of(notifier, struct ipu_isys, notifier);
-	struct sensor_async_sd *s_asd =
-		container_of(asd, struct sensor_async_sd, asd);
+	struct ipu_isys *isys = container_of(notifier,
+					struct ipu_isys, notifier);
+	struct sensor_async_sd *s_asd = container_of(asc,
+					struct sensor_async_sd, asc);
 	int ret;
-
-	if (s_asd->csi2.port >= isys->pdata->ipdata->csi2.nports) {
-		dev_err(&isys->adev->dev, "invalid csi2 port %u\n",
-			s_asd->csi2.port);
-		return -EINVAL;
-	}
+#if IS_ENABLED(CONFIG_IPU_BRIDGE)
 
 	ret = ipu_bridge_instantiate_vcm(sd->dev);
 	if (ret) {
 		dev_err(&isys->adev->dev, "instantiate vcm failed\n");
 		return ret;
 	}
+#endif
 
-	dev_dbg(&isys->adev->dev, "bind %s nlanes is %d port is %d\n",
-		sd->name, s_asd->csi2.nlanes, s_asd->csi2.port);
+	dev_info(&isys->adev->dev, "bind %s nlanes is %d port is %d\n",
+		 sd->name, s_asd->csi2.nlanes, s_asd->csi2.port);
 	ret = isys_complete_ext_device_registration(isys, sd, &s_asd->csi2);
 	if (ret)
 		return ret;
 
 	return v4l2_device_register_subdev_nodes(&isys->v4l2_dev);
+}
+
+static void isys_notifier_unbind(struct v4l2_async_notifier *notifier,
+				 struct v4l2_subdev *sd,
+				 struct v4l2_async_connection *asc)
+{
+	struct ipu_isys *isys = container_of(notifier,
+					struct ipu_isys, notifier);
+
+	dev_info(&isys->adev->dev, "unbind %s\n", sd->name);
 }
 
 static int isys_notifier_complete(struct v4l2_async_notifier *notifier)
@@ -437,20 +443,22 @@ static int isys_notifier_complete(struct v4l2_async_notifier *notifier)
 
 static const struct v4l2_async_notifier_operations isys_async_ops = {
 	.bound = isys_notifier_bound,
+	.unbind = isys_notifier_unbind,
 	.complete = isys_notifier_complete,
 };
 
-#define ISYS_MAX_PORTS 8
 static int isys_notifier_init(struct ipu_isys *isys)
 {
+	const struct ipu_isys_internal_csi2_pdata *csi2 =
+	    &isys->pdata->ipdata->csi2;
 	struct ipu_device *isp = isys->adev->isp;
 	struct device *dev = &isp->pdev->dev;
 	unsigned int i;
 	int ret;
 
-	v4l2_async_nf_init(&isys->notifier);
+	v4l2_async_nf_init(&isys->notifier, &isys->v4l2_dev);
 
-	for (i = 0; i < ISYS_MAX_PORTS; i++) {
+	for (i = 0; i < csi2->nports; i++) {
 		struct v4l2_fwnode_endpoint vep = {
 			.bus_type = V4L2_MBUS_CSI2_DPHY
 		};
@@ -463,24 +471,19 @@ static int isys_notifier_init(struct ipu_isys *isys)
 			continue;
 
 		ret = v4l2_fwnode_endpoint_parse(ep, &vep);
-		if (ret) {
-			dev_err(dev, "fwnode endpoint parse failed: %d\n", ret);
+		if (ret)
 			goto err_parse;
-		}
 
 		s_asd = v4l2_async_nf_add_fwnode_remote(&isys->notifier, ep,
-							struct sensor_async_sd);
+							struct
+							sensor_async_sd);
 		if (IS_ERR(s_asd)) {
 			ret = PTR_ERR(s_asd);
-			dev_err(dev, "add remove fwnode failed: %d\n", ret);
 			goto err_parse;
 		}
 
 		s_asd->csi2.port = vep.base.port;
 		s_asd->csi2.nlanes = vep.bus.mipi_csi2.num_data_lanes;
-
-		dev_dbg(dev, "remote endpoint port %d with %d lanes added\n",
-			s_asd->csi2.port, s_asd->csi2.nlanes);
 
 		fwnode_handle_put(ep);
 
@@ -491,10 +494,17 @@ err_parse:
 		return ret;
 	}
 
+	if (list_empty(&isys->notifier.waiting_list)) {
+		/* isys probe could continue with async subdevs missing */
+		dev_warn(&isys->adev->dev, "no subdev found in graph\n");
+		return 0;
+	}
+
 	isys->notifier.ops = &isys_async_ops;
-	ret = v4l2_async_nf_register(&isys->v4l2_dev, &isys->notifier);
+	ret = v4l2_async_nf_register(&isys->notifier);
 	if (ret) {
-		dev_err(dev, "failed to register async notifier : %d\n", ret);
+		dev_err(&isys->adev->dev,
+			"failed to register async notifier : %d\n", ret);
 		v4l2_async_nf_cleanup(&isys->notifier);
 	}
 

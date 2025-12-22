@@ -60,12 +60,12 @@
 struct task_struct;
 
 struct ipu_isys_csi2_config {
-	unsigned int nlanes;
-	unsigned int port;
+	u32 nlanes;
+	u32 port;
 };
 
 struct sensor_async_sd {
-	struct v4l2_async_subdev asd;
+	struct v4l2_async_connection asc;
 	struct ipu_isys_csi2_config csi2;
 };
 
