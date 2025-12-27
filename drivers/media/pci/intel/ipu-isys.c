@@ -402,8 +402,8 @@ static int isys_notifier_bound(struct v4l2_async_notifier *notifier,
 {
 	struct ipu_isys *isys =
 		container_of(notifier, struct ipu_isys, notifier);
-	struct sensor_async_sd *s_asd =
-		container_of(asd, struct sensor_async_sd, asd);
+	struct sensor_async_subdev *s_asd =
+		container_of(asd, struct sensor_async_subdev, asd);
 	int ret;
 
 	if (s_asd->csi2.port >= isys->pdata->ipdata->csi2.nports) {
@@ -454,7 +454,7 @@ static int isys_notifier_init(struct ipu_isys *isys)
 		struct v4l2_fwnode_endpoint vep = {
 			.bus_type = V4L2_MBUS_CSI2_DPHY
 		};
-		struct sensor_async_sd *s_asd;
+		struct sensor_async_subdev *s_asd;
 		struct fwnode_handle *ep;
 
 		ep = fwnode_graph_get_endpoint_by_id(dev_fwnode(dev), i, 0,
@@ -469,7 +469,7 @@ static int isys_notifier_init(struct ipu_isys *isys)
 		}
 
 		s_asd = v4l2_async_nf_add_fwnode_remote(&isys->notifier, ep,
-							struct sensor_async_sd);
+							struct sensor_async_subdev);
 		if (IS_ERR(s_asd)) {
 			ret = PTR_ERR(s_asd);
 			dev_err(dev, "add remove fwnode failed: %d\n", ret);
