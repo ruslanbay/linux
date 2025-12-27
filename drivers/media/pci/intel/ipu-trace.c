@@ -195,10 +195,10 @@ static void __ipu_trace_restore(struct device *dev)
 
 	if (!sys->memory.memory_buffer) {
 		sys->memory.memory_buffer =
-		    dma_alloc_attrs(dev, MEMORY_RING_BUFFER_SIZE +
-				    MEMORY_RING_BUFFER_GUARD,
-				    &sys->memory.dma_handle,
-				    GFP_KERNEL, 0);
+		    dma_alloc_coherent(dev, MEMORY_RING_BUFFER_SIZE +
+				MEMORY_RING_BUFFER_GUARD,
+				&sys->memory.dma_handle,
+				GFP_KERNEL);
 	}
 
 	if (!sys->memory.memory_buffer) {
@@ -825,6 +825,15 @@ int ipu_trace_init(struct ipu_device *isp, void __iomem *base,
 	sys->base = base;
 	sys->blocks = blocks;
 
+	sys->memory.memory_buffer =
+	    dma_alloc_coherent(dev, MEMORY_RING_BUFFER_SIZE +
+			       MEMORY_RING_BUFFER_GUARD,
+			       &sys->memory.dma_handle,
+			       GFP_KERNEL);
+
+	if (!sys->memory.memory_buffer)
+		dev_err(dev, "failed alloc memory for tracing.\n");
+
 leave:
 	mutex_unlock(&isp->trace->lock);
 
@@ -845,11 +854,11 @@ void ipu_trace_uninit(struct device *dev)
 	mutex_lock(&trace->lock);
 
 	if (sys->memory.memory_buffer)
-		dma_free_attrs(sys->dev,
-			       MEMORY_RING_BUFFER_SIZE +
-			       MEMORY_RING_BUFFER_GUARD,
-			       sys->memory.memory_buffer,
-			       sys->memory.dma_handle, 0);
+		dma_free_coherent(sys->dev,
+				  MEMORY_RING_BUFFER_SIZE +
+				  MEMORY_RING_BUFFER_GUARD,
+				  sys->memory.memory_buffer,
+				  sys->memory.dma_handle);
 
 	sys->dev = NULL;
 	sys->memory.memory_buffer = NULL;
