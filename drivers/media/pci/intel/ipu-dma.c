@@ -18,6 +18,27 @@
 #include "ipu-bus.h"
 #include "ipu-mmu.h"
 
+struct vm_info {
+	struct list_head list;
+	struct page **pages;
+	dma_addr_t ipu_iova;
+	void *vaddr;
+	unsigned long size;
+};
+
+static struct vm_info *get_vm_info(struct ipu_mmu *mmu, dma_addr_t iova)
+{
+	struct vm_info *info, *save;
+
+	list_for_each_entry_safe(info, save, &mmu->vma_list, list) {
+		if (iova >= info->ipu_iova &&
+		    iova < (info->ipu_iova + info->size))
+			return info;
+	}
+
+	return NULL;
+}
+
 /* Begin of things adapted from arch/arm/mm/dma-mapping.c */
 static void __dma_clear_buffer(struct page *page, size_t size,
 			       unsigned long attrs
@@ -247,27 +268,26 @@ static void ipu_dma_free(struct device *dev, size_t size, void *vaddr,
 
 static int ipu_dma_mmap(struct device *dev, struct vm_area_struct *vma,
 			void *addr, dma_addr_t iova, size_t size,
-			unsigned long attrs
-			)
+			unsigned long attrs)
 {
-	struct vm_struct *area = find_vm_area(addr);
+	struct ipu_mmu *mmu = to_ipu_bus_device(dev)->mmu;
+	struct vm_info *info;
 	size_t count = PAGE_ALIGN(size) >> PAGE_SHIFT;
-	size_t i;
 
-	if (!area || !area->pages)
+	info = get_vm_info(mmu, iova);
+	if (!info)
+		return -EFAULT;
+
+	if (!info->vaddr)
 		return -EFAULT;
 
 	if (vma->vm_start & ~PAGE_MASK)
 		return -EINVAL;
 
-	if (size > area->size)
+	if (size > info->size)
 		return -EFAULT;
 
-	for (i = 0; i < count; i++)
-		vm_insert_page(vma, vma->vm_start + (i << PAGE_SHIFT),
-			       area->pages[i]);
-
-	return 0;
+	return vm_insert_pages(vma, vma->vm_start, info->pages, &count);
 }
 
 static void ipu_dma_unmap_sg(struct device *dev,
