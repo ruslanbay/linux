@@ -64,7 +64,7 @@ struct ipu_isys_csi2_config {
 	unsigned int port;
 };
 
-struct sensor_async_sd {
+struct sensor_async_subdev {
 	struct v4l2_async_subdev asd;
 	struct ipu_isys_csi2_config csi2;
 };
