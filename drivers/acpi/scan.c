@@ -2718,3 +2718,16 @@ struct acpi_device *acpi_dev_get_next_consumer_dev(struct acpi_device *supplier,
 	return adev;
 }
 EXPORT_SYMBOL_GPL(acpi_dev_get_next_consumer_dev);
+
+/**
+ * acpi_fetch_acpi_dev - Retrieve ACPI device object.
+ * @handle: ACPI handle associated with the requested ACPI device object.
+ *
+ * Return a pointer to the ACPI device object associated with @handle, if
+ * present, or NULL otherwise.
+ */
+struct acpi_device *acpi_fetch_acpi_dev(acpi_handle handle)
+{
+	return handle_to_device(handle, NULL);
+}
+EXPORT_SYMBOL_GPL(acpi_fetch_acpi_dev);
