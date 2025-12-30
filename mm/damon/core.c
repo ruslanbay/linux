@@ -357,6 +357,15 @@ int damon_start(struct damon_ctx **ctxs, int nr_ctxs)
 	return err;
 }
 
+static void kdamond_usleep(unsigned long usecs)
+{
+	/* See Documentation/timers/timers-howto.rst for the thresholds */
+	if (usecs > 20 * 1000)
+		schedule_timeout_idle(usecs_to_jiffies(usecs));
+	else
+		usleep_idle_range(usecs, usecs + 1);
+}
+
 /*
  * __damon_stop() - Stops monitoring of given context.
  * @ctx:	monitoring context
@@ -370,8 +379,7 @@ static int __damon_stop(struct damon_ctx *ctx)
 		ctx->kdamond_stop = true;
 		mutex_unlock(&ctx->kdamond_lock);
 		while (damon_kdamond_running(ctx))
-			usleep_range(ctx->sample_interval,
-					ctx->sample_interval * 2);
+			kdamond_usleep(ctx->sample_interval);
 		return 0;
 	}
 	mutex_unlock(&ctx->kdamond_lock);
@@ -499,14 +507,31 @@ static void damon_merge_regions_of(struct damon_target *t, unsigned int thres,
  * access frequencies are similar.  This is for minimizing the monitoring
  * overhead under the dynamically changeable access pattern.  If a merge was
  * unnecessarily made, later 'kdamond_split_regions()' will revert it.
+ *
+ * The total number of regions could be higher than the user-defined limit,
+ * max_nr_regions for some cases.  For example, the user can update
+ * max_nr_regions to a number that lower than the current number of regions
+ * while DAMON is running.  For such a case, repeat merging until the limit is
+ * met while increasing @threshold up to possible maximum level.
  */
 static void kdamond_merge_regions(struct damon_ctx *c, unsigned int threshold,
 				  unsigned long sz_limit)
 {
 	struct damon_target *t;
+	unsigned int nr_regions;
+	unsigned int max_thres;
 
-	damon_for_each_target(t, c)
-		damon_merge_regions_of(t, threshold, sz_limit);
+	max_thres = c->aggr_interval /
+		(c->sample_interval ?  c->sample_interval : 1);
+	do {
+		nr_regions = 0;
+		damon_for_each_target(t, c) {
+			damon_merge_regions_of(t, threshold, sz_limit);
+			nr_regions += damon_nr_regions(t);
+		}
+		threshold = max(1, threshold * 2);
+	} while (nr_regions > c->max_nr_regions &&
+			threshold / 2 < max_thres);
 }
 
 /*
@@ -670,7 +695,7 @@ static int kdamond_fn(void *data)
 				ctx->callback.after_sampling(ctx))
 			set_kdamond_stop(ctx);
 
-		usleep_range(ctx->sample_interval, ctx->sample_interval + 1);
+		kdamond_usleep(ctx->sample_interval);
 
 		if (ctx->primitive.check_accesses)
 			max_nr_accesses = ctx->primitive.check_accesses(ctx);

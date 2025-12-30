@@ -228,7 +228,6 @@ enum HCLGE_DEV_STATE {
 	HCLGE_STATE_MBX_HANDLING,
 	HCLGE_STATE_ERR_SERVICE_SCHED,
 	HCLGE_STATE_STATISTICS_UPDATING,
-	HCLGE_STATE_CMD_DISABLE,
 	HCLGE_STATE_LINK_UPDATING,
 	HCLGE_STATE_RST_FAIL,
 	HCLGE_STATE_FD_TBL_CHANGED,
@@ -275,10 +274,13 @@ struct hclge_mac {
 	u8 media_type;	/* port media type, e.g. fibre/copper/backplane */
 	u8 mac_addr[ETH_ALEN];
 	u8 autoneg;
+	u8 req_autoneg;
 	u8 duplex;
+	u8 req_duplex;
 	u8 support_autoneg;
 	u8 speed_type;	/* 0: sfp speed, 1: active speed */
 	u32 speed;
+	u32 req_speed;
 	u32 max_speed;
 	u32 speed_ability; /* speed ability supported by current media */
 	u32 module_type; /* sub media type, e.g. kr/cr/sr/lr */
@@ -294,11 +296,9 @@ struct hclge_mac {
 };
 
 struct hclge_hw {
-	void __iomem *io_base;
-	void __iomem *mem_base;
+	struct hclge_comm_hw hw;
 	struct hclge_mac mac;
 	int num_vec;
-	struct hclge_cmq cmq;
 };
 
 /* TQP stats */
@@ -613,6 +613,11 @@ struct key_info {
 #define MAX_FD_FILTER_NUM	4096
 #define HCLGE_ARFS_EXPIRE_INTERVAL	5UL
 
+#define hclge_read_dev(a, reg) \
+	hclge_comm_read_reg((a)->hw.io_base, reg)
+#define hclge_write_dev(a, reg, value) \
+	hclge_comm_write_reg((a)->hw.io_base, reg, value)
+
 enum HCLGE_FD_ACTIVE_RULE_TYPE {
 	HCLGE_FD_RULE_NONE,
 	HCLGE_FD_ARFS_ACTIVE,
@@ -824,6 +829,9 @@ struct hclge_vf_vlan_cfg {
 		(y) = (_k_ ^ ~_v_) & (_k_); \
 	} while (0)
 
+#define HCLGE_MAC_STATS_FIELD_OFF(f) (offsetof(struct hclge_mac_stats, f))
+#define HCLGE_STATS_READ(p, offset) (*(u64 *)((u8 *)(p) + (offset)))
+
 #define HCLGE_MAC_TNL_LOG_SIZE	8
 #define HCLGE_VPORT_NUM 256
 struct hclge_dev {
@@ -855,7 +863,7 @@ struct hclge_dev {
 
 	u16 fdir_pf_filter_count; /* Num of guaranteed filters for this PF */
 	u16 num_alloc_vport;		/* Num vports this driver supports */
-	u32 numa_node_mask;
+	nodemask_t numa_node_mask;
 	u16 rx_buf_len;
 	u16 num_tx_desc;		/* desc num of per tx queue */
 	u16 num_rx_desc;		/* desc num of per rx queue */
@@ -876,12 +884,10 @@ struct hclge_dev {
 	u16 num_msi;
 	u16 num_msi_left;
 	u16 num_msi_used;
-	u32 base_msi_vector;
 	u16 *vector_status;
 	int *vector_irq;
 	u16 num_nic_msi;	/* Num of nic vectors for this PF */
 	u16 num_roce_msi;	/* Num of roce vectors for this PF */
-	int roce_base_vector;
 
 	unsigned long service_timer_period;
 	unsigned long service_timer_previous;
@@ -901,8 +907,6 @@ struct hclge_dev {
 
 #define HCLGE_FLAG_MAIN			BIT(0)
 #define HCLGE_FLAG_DCB_CAPABLE		BIT(1)
-#define HCLGE_FLAG_DCB_ENABLE		BIT(2)
-#define HCLGE_FLAG_MQPRIO_ENABLE	BIT(3)
 	u32 flag;
 
 	u32 pkt_buf_size; /* Total pf buf size for tx/rx */
@@ -926,6 +930,8 @@ struct hclge_dev {
 	u16 hclge_fd_rule_num;
 	unsigned long serv_processed_cnt;
 	unsigned long last_serv_processed;
+	unsigned long last_rst_scheduled;
+	unsigned long last_mbx_scheduled;
 	unsigned long fd_bmap[BITS_TO_LONGS(MAX_FD_FILTER_NUM)];
 	enum HCLGE_FD_ACTIVE_RULE_TYPE fd_active_type;
 	u8 fd_en;
@@ -999,7 +1005,9 @@ struct hclge_vlan_info {
 
 struct hclge_port_base_vlan_config {
 	u16 state;
+	bool tbl_sta;
 	struct hclge_vlan_info vlan_info;
+	struct hclge_vlan_info old_vlan_info;
 };
 
 struct hclge_vf_info {
@@ -1054,6 +1062,7 @@ struct hclge_vport {
 	spinlock_t mac_list_lock; /* protect mac address need to add/detele */
 	struct list_head uc_mac_list;   /* Store VF unicast table */
 	struct list_head mc_mac_list;   /* Store VF multicast table */
+
 	struct list_head vlan_list;     /* Store VF vlan table */
 };
 
@@ -1123,6 +1132,7 @@ void hclge_rm_vport_all_mac_table(struct hclge_vport *vport, bool is_del_list,
 void hclge_rm_vport_all_vlan_table(struct hclge_vport *vport, bool is_del_list);
 void hclge_uninit_vport_vlan_table(struct hclge_dev *hdev);
 void hclge_restore_mac_table_common(struct hclge_vport *vport);
+void hclge_restore_vport_port_base_vlan_config(struct hclge_dev *hdev);
 void hclge_restore_vport_vlan_table(struct hclge_vport *vport);
 int hclge_update_port_base_vlan_cfg(struct hclge_vport *vport, u16 state,
 				    struct hclge_vlan_info *vlan_info);
@@ -1138,4 +1148,5 @@ void hclge_inform_vf_promisc_info(struct hclge_vport *vport);
 int hclge_dbg_dump_rst_info(struct hclge_dev *hdev, char *buf, int len);
 int hclge_push_vf_link_status(struct hclge_vport *vport);
 int hclge_enable_vport_vlan_filter(struct hclge_vport *vport, bool request_en);
+int hclge_mac_update_stats(struct hclge_dev *hdev);
 #endif

@@ -367,6 +367,7 @@ void update_numa_distance(struct device_node *node)
 	WARN(numa_distance_table[nid][nid] == -1,
 	     "NUMA distance details for node %d not provided\n", nid);
 }
+EXPORT_SYMBOL_GPL(update_numa_distance);
 
 /*
  * ibm,numa-lookup-index-table= {N, domainid1, domainid2, ..... domainidN}
@@ -376,9 +377,9 @@ static void initialize_form2_numa_distance_lookup_table(void)
 {
 	int i, j;
 	struct device_node *root;
-	const __u8 *numa_dist_table;
+	const __u8 *form2_distances;
 	const __be32 *numa_lookup_index;
-	int numa_dist_table_length;
+	int form2_distances_length;
 	int max_numa_index, distance_index;
 
 	if (firmware_has_feature(FW_FEATURE_OPAL))
@@ -392,45 +393,41 @@ static void initialize_form2_numa_distance_lookup_table(void)
 	max_numa_index = of_read_number(&numa_lookup_index[0], 1);
 
 	/* first element of the array is the size and is encode-int */
-	numa_dist_table = of_get_property(root, "ibm,numa-distance-table", NULL);
-	numa_dist_table_length = of_read_number((const __be32 *)&numa_dist_table[0], 1);
+	form2_distances = of_get_property(root, "ibm,numa-distance-table", NULL);
+	form2_distances_length = of_read_number((const __be32 *)&form2_distances[0], 1);
 	/* Skip the size which is encoded int */
-	numa_dist_table += sizeof(__be32);
+	form2_distances += sizeof(__be32);
 
-	pr_debug("numa_dist_table_len = %d, numa_dist_indexes_len = %d\n",
-		 numa_dist_table_length, max_numa_index);
+	pr_debug("form2_distances_len = %d, numa_dist_indexes_len = %d\n",
+		 form2_distances_length, max_numa_index);
 
 	for (i = 0; i < max_numa_index; i++)
 		/* +1 skip the max_numa_index in the property */
 		numa_id_index_table[i] = of_read_number(&numa_lookup_index[i + 1], 1);
 
 
-	if (numa_dist_table_length != max_numa_index * max_numa_index) {
+	if (form2_distances_length != max_numa_index * max_numa_index) {
 		WARN(1, "Wrong NUMA distance information\n");
-		/* consider everybody else just remote. */
-		for (i = 0;  i < max_numa_index; i++) {
-			for (j = 0; j < max_numa_index; j++) {
-				int nodeA = numa_id_index_table[i];
-				int nodeB = numa_id_index_table[j];
-
-				if (nodeA == nodeB)
-					numa_distance_table[nodeA][nodeB] = LOCAL_DISTANCE;
-				else
-					numa_distance_table[nodeA][nodeB] = REMOTE_DISTANCE;
-			}
-		}
+		form2_distances = NULL; // don't use it
 	}
-
 	distance_index = 0;
 	for (i = 0;  i < max_numa_index; i++) {
 		for (j = 0; j < max_numa_index; j++) {
 			int nodeA = numa_id_index_table[i];
 			int nodeB = numa_id_index_table[j];
+			int dist;
 
-			numa_distance_table[nodeA][nodeB] = numa_dist_table[distance_index++];
-			pr_debug("dist[%d][%d]=%d ", nodeA, nodeB, numa_distance_table[nodeA][nodeB]);
+			if (form2_distances)
+				dist = form2_distances[distance_index++];
+			else if (nodeA == nodeB)
+				dist = LOCAL_DISTANCE;
+			else
+				dist = REMOTE_DISTANCE;
+			numa_distance_table[nodeA][nodeB] = dist;
+			pr_debug("dist[%d][%d]=%d ", nodeA, nodeB, dist);
 		}
 	}
+
 	of_node_put(root);
 }
 
@@ -960,7 +957,9 @@ static int __init parse_numa_properties(void)
 			of_node_put(cpu);
 		}
 
-		node_set_online(nid);
+		/* node_set_online() is an UB if 'nid' is negative */
+		if (likely(nid >= 0))
+			node_set_online(nid);
 	}
 
 	get_n_mem_cells(&n_mem_addr_cells, &n_mem_size_cells);
@@ -1163,6 +1162,9 @@ void __init mem_topology_setup(void)
 {
 	int cpu;
 
+	max_low_pfn = max_pfn = memblock_end_of_DRAM() >> PAGE_SHIFT;
+	min_low_pfn = MEMORY_START >> PAGE_SHIFT;
+
 	/*
 	 * Linux/mm assumes node 0 to be online at boot. However this is not
 	 * true on PowerPC, where node 0 is similar to any other node, it
@@ -1206,9 +1208,6 @@ void __init mem_topology_setup(void)
 void __init initmem_init(void)
 {
 	int nid;
-
-	max_low_pfn = memblock_end_of_DRAM() >> PAGE_SHIFT;
-	max_pfn = max_low_pfn;
 
 	memblock_dump_all();
 

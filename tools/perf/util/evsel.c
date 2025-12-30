@@ -1047,6 +1047,17 @@ void __weak arch_evsel__set_sample_weight(struct evsel *evsel)
 	evsel__set_sample_bit(evsel, WEIGHT);
 }
 
+static void evsel__set_default_freq_period(struct record_opts *opts,
+					   struct perf_event_attr *attr)
+{
+	if (opts->freq) {
+		attr->freq = 1;
+		attr->sample_freq = opts->freq;
+	} else {
+		attr->sample_period = opts->default_interval;
+	}
+}
+
 /*
  * The enable_on_exec/disabled value strategy:
  *
@@ -1113,14 +1124,12 @@ void evsel__config(struct evsel *evsel, struct record_opts *opts,
 	 * We default some events to have a default interval. But keep
 	 * it a weak assumption overridable by the user.
 	 */
-	if (!attr->sample_period) {
-		if (opts->freq) {
-			attr->freq		= 1;
-			attr->sample_freq	= opts->freq;
-		} else {
-			attr->sample_period = opts->default_interval;
-		}
-	}
+	if ((evsel->is_libpfm_event && !attr->sample_period) ||
+	    (!evsel->is_libpfm_event && (!attr->sample_period ||
+					 opts->user_freq != UINT_MAX ||
+					 opts->user_interval != ULLONG_MAX)))
+		evsel__set_default_freq_period(opts, attr);
+
 	/*
 	 * If attr->freq was set (here or earlier), ask for period
 	 * to be sampled.
@@ -1407,6 +1416,15 @@ static void evsel__free_config_terms(struct evsel *evsel)
 	free_config_terms(&evsel->config_terms);
 }
 
+static void (*evsel__priv_destructor)(void *priv);
+
+void evsel__set_priv_destructor(void (*destructor)(void *priv))
+{
+	assert(evsel__priv_destructor == NULL);
+
+	evsel__priv_destructor = destructor;
+}
+
 void evsel__exit(struct evsel *evsel)
 {
 	assert(list_empty(&evsel->core.node));
@@ -1427,6 +1445,8 @@ void evsel__exit(struct evsel *evsel)
 	hashmap__free(evsel->per_pkg_mask);
 	evsel->per_pkg_mask = NULL;
 	zfree(&evsel->metric_events);
+	if (evsel__priv_destructor)
+		evsel__priv_destructor(evsel->priv);
 	perf_evsel__object.fini(evsel);
 }
 
@@ -2243,7 +2263,6 @@ int evsel__parse_sample(struct evsel *evsel, union perf_event *event,
 	data->period = evsel->core.attr.sample_period;
 	data->cpumode = event->header.misc & PERF_RECORD_MISC_CPUMODE_MASK;
 	data->misc    = event->header.misc;
-	data->id = -1ULL;
 	data->data_src = PERF_MEM_DATA_SRC_NONE;
 
 	if (event->header.type != PERF_RECORD_SAMPLE) {
@@ -2911,6 +2930,8 @@ bool evsel__is_hybrid(struct evsel *evsel)
 
 struct evsel *evsel__leader(struct evsel *evsel)
 {
+	if (evsel->core.leader == NULL)
+		return NULL;
 	return container_of(evsel->core.leader, struct evsel, core);
 }
 

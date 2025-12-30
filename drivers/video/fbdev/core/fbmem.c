@@ -25,6 +25,7 @@
 #include <linux/init.h>
 #include <linux/linux_logo.h>
 #include <linux/proc_fs.h>
+#include <linux/platform_device.h>
 #include <linux/seq_file.h>
 #include <linux/console.h>
 #include <linux/kmod.h>
@@ -513,7 +514,7 @@ static int fb_show_logo_line(struct fb_info *info, int rotate,
 
 		while (n && (n * (logo->width + 8) - 8 > xres))
 			--n;
-		image.dx = (xres - n * (logo->width + 8) - 8) / 2;
+		image.dx = (xres - (n * (logo->width + 8) - 8)) / 2;
 		image.dy = y ?: (yres - logo->height) / 2;
 	} else {
 		image.dx = 0;
@@ -1019,6 +1020,16 @@ fb_set_var(struct fb_info *info, struct fb_var_screeninfo *var)
 	if (ret)
 		return ret;
 
+	/* verify that virtual resolution >= physical resolution */
+	if (var->xres_virtual < var->xres ||
+	    var->yres_virtual < var->yres) {
+		pr_warn("WARNING: fbcon: Driver '%s' missed to adjust virtual screen size (%ux%u vs. %ux%u)\n",
+			info->fix.id,
+			var->xres_virtual, var->yres_virtual,
+			var->xres, var->yres);
+		return -EINVAL;
+	}
+
 	if ((var->activate & FB_ACTIVATE_MASK) != FB_ACTIVATE_NOW)
 		return 0;
 
@@ -1052,8 +1063,10 @@ fb_set_var(struct fb_info *info, struct fb_var_screeninfo *var)
 	    !list_empty(&info->modelist))
 		ret = fb_add_videomode(&mode, &info->modelist);
 
-	if (ret)
+	if (ret) {
+		info->var = old_var;
 		return ret;
+	}
 
 	event.info = info;
 	event.data = &mode;
@@ -1107,9 +1120,13 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 	case FBIOPUT_VSCREENINFO:
 		if (copy_from_user(&var, argp, sizeof(var)))
 			return -EFAULT;
+		/* only for kernel-internal use */
+		var.activate &= ~FB_ACTIVATE_KD_TEXT;
 		console_lock();
 		lock_fb_info(info);
-		ret = fb_set_var(info, &var);
+		ret = fbcon_modechange_possible(info, &var);
+		if (!ret)
+			ret = fb_set_var(info, &var);
 		if (!ret)
 			fbcon_update_vcs(info, var.activate & FB_ACTIVATE_ALL);
 		unlock_fb_info(info);
@@ -1438,6 +1455,10 @@ __releases(&info->lock)
 	struct fb_info * const info = file->private_data;
 
 	lock_fb_info(info);
+#if IS_ENABLED(CONFIG_FB_DEFERRED_IO)
+	if (info->fbdefio)
+		fb_deferred_io_release(info);
+#endif
 	if (info->fbops->fb_release)
 		info->fbops->fb_release(info,1);
 	module_put(info->fbops->owner);
@@ -1557,18 +1578,43 @@ static void do_remove_conflicting_framebuffers(struct apertures_struct *a,
 	/* check all firmware fbs and kick off if the base addr overlaps */
 	for_each_registered_fb(i) {
 		struct apertures_struct *gen_aper;
+		struct device *device;
 
 		if (!(registered_fb[i]->flags & FBINFO_MISC_FIRMWARE))
 			continue;
 
 		gen_aper = registered_fb[i]->apertures;
+		device = registered_fb[i]->device;
 		if (fb_do_apertures_overlap(gen_aper, a) ||
 			(primary && gen_aper && gen_aper->count &&
 			 gen_aper->ranges[0].base == VGA_FB_PHYS)) {
 
 			printk(KERN_INFO "fb%d: switching to %s from %s\n",
 			       i, name, registered_fb[i]->fix.id);
-			do_unregister_framebuffer(registered_fb[i]);
+
+			/*
+			 * If we kick-out a firmware driver, we also want to remove
+			 * the underlying platform device, such as simple-framebuffer,
+			 * VESA, EFI, etc. A native driver will then be able to
+			 * allocate the memory range.
+			 *
+			 * If it's not a platform device, at least print a warning. A
+			 * fix would add code to remove the device from the system.
+			 */
+			if (!device) {
+				/* TODO: Represent each OF framebuffer as its own
+				 * device in the device hierarchy. For now, offb
+				 * doesn't have such a device, so unregister the
+				 * framebuffer as before without warning.
+				 */
+				do_unregister_framebuffer(registered_fb[i]);
+			} else if (dev_is_platform(device)) {
+				registered_fb[i]->forced_out = true;
+				platform_device_unregister(to_platform_device(device));
+			} else {
+				pr_warn("fb%d: cannot remove device\n", i);
+				do_unregister_framebuffer(registered_fb[i]);
+			}
 		}
 	}
 }
@@ -1760,6 +1806,53 @@ int remove_conflicting_framebuffers(struct apertures_struct *a,
 EXPORT_SYMBOL(remove_conflicting_framebuffers);
 
 /**
+ * is_firmware_framebuffer - detect if firmware-configured framebuffer matches
+ * @a: memory range, users of which are to be checked
+ *
+ * This function checks framebuffer devices (initialized by firmware/bootloader)
+ * which use memory range described by @a. If @a matchesm the function returns
+ * true, otherwise false.
+ */
+bool is_firmware_framebuffer(struct apertures_struct *a)
+{
+	bool do_free = false;
+	bool found = false;
+	int i;
+
+	if (!a) {
+		a = alloc_apertures(1);
+		if (!a)
+			return false;
+
+		a->ranges[0].base = 0;
+		a->ranges[0].size = ~0;
+		do_free = true;
+	}
+
+	mutex_lock(&registration_lock);
+	/* check all firmware fbs and kick off if the base addr overlaps */
+	for_each_registered_fb(i) {
+		struct apertures_struct *gen_aper;
+
+		if (!(registered_fb[i]->flags & FBINFO_MISC_FIRMWARE))
+			continue;
+
+		gen_aper = registered_fb[i]->apertures;
+		if (fb_do_apertures_overlap(gen_aper, a)) {
+			found = true;
+			break;
+		}
+	}
+	mutex_unlock(&registration_lock);
+
+	if (do_free)
+		kfree(a);
+
+	return found;
+}
+EXPORT_SYMBOL(is_firmware_framebuffer);
+
+/**
  * remove_conflicting_pci_framebuffers - remove firmware-configured framebuffers for PCI devices
  * @pdev: PCI device
  * @name: requesting driver name
@@ -1848,9 +1941,13 @@ EXPORT_SYMBOL(register_framebuffer);
 void
 unregister_framebuffer(struct fb_info *fb_info)
 {
-	mutex_lock(&registration_lock);
+	bool forced_out = fb_info->forced_out;
+
+	if (!forced_out)
+		mutex_lock(&registration_lock);
 	do_unregister_framebuffer(fb_info);
-	mutex_unlock(&registration_lock);
+	if (!forced_out)
+		mutex_unlock(&registration_lock);
 }
 EXPORT_SYMBOL(unregister_framebuffer);
 

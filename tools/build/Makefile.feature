@@ -48,7 +48,6 @@ FEATURE_TESTS_BASIC :=                  \
         numa_num_possible_cpus          \
         libperl                         \
         libpython                       \
-        libpython-version               \
         libslang                        \
         libslang-include-subdir         \
         libtraceevent                   \
@@ -70,6 +69,7 @@ FEATURE_TESTS_BASIC :=                  \
         libaio				\
         libzstd				\
         disassembler-four-args		\
+        disassembler-init-styled	\
         file-handle
 
 # FEATURE_TESTS_BASIC + FEATURE_TESTS_EXTRA is the complete list
@@ -98,6 +98,7 @@ FEATURE_TESTS_EXTRA :=                  \
          llvm-version                   \
          clang                          \
          libbpf                         \
+         libbpf-btf__load_from_kernel_by_id \
          libpfm4                        \
          libdebuginfod			\
          clang-bpf-co-re

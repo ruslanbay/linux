@@ -1431,8 +1431,10 @@ static int allocate_buffers_internal(struct allegro_channel *channel,
 		INIT_LIST_HEAD(&buffer->head);
 
 		err = allegro_alloc_buffer(dev, buffer, size);
-		if (err)
+		if (err) {
+			kfree(buffer);
 			goto err;
+		}
 		list_add(&buffer->head, list);
 	}
 
@@ -2184,6 +2186,15 @@ static irqreturn_t allegro_hardirq(int irq, void *data)
 static irqreturn_t allegro_irq_thread(int irq, void *data)
 {
 	struct allegro_dev *dev = data;
+
+	/*
+	 * The firmware is initialized after the mailbox is setup. We further
+	 * check the AL5_ITC_CPU_IRQ_STA register, if the firmware actually
+	 * triggered the interrupt. Although this should not happen, make sure
+	 * that we ignore interrupts, if the mailbox is not initialized.
+	 */
+	if (!dev->mbox_status)
+		return IRQ_NONE;
 
 	allegro_mbox_notify(dev->mbox_status);
 
@@ -3729,6 +3740,7 @@ static int allegro_probe(struct platform_device *pdev)
 	if (ret < 0) {
 		v4l2_err(&dev->v4l2_dev,
 			 "failed to request firmware: %d\n", ret);
+		v4l2_device_unregister(&dev->v4l2_dev);
 		return ret;
 	}
 

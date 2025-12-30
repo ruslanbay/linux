@@ -676,7 +676,7 @@ static int sev_launch_measure(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		if (params.len > SEV_FW_BLOB_MAX_SIZE)
 			return -EINVAL;
 
-		blob = kmalloc(params.len, GFP_KERNEL_ACCOUNT);
+		blob = kzalloc(params.len, GFP_KERNEL_ACCOUNT);
 		if (!blob)
 			return -ENOMEM;
 
@@ -796,7 +796,7 @@ static int __sev_dbg_decrypt_user(struct kvm *kvm, unsigned long paddr,
 	if (!IS_ALIGNED(dst_paddr, 16) ||
 	    !IS_ALIGNED(paddr,     16) ||
 	    !IS_ALIGNED(size,      16)) {
-		tpage = (void *)alloc_page(GFP_KERNEL);
+		tpage = (void *)alloc_page(GFP_KERNEL | __GFP_ZERO);
 		if (!tpage)
 			return -ENOMEM;
 
@@ -832,7 +832,7 @@ static int __sev_dbg_encrypt_user(struct kvm *kvm, unsigned long paddr,
 
 	/* If source buffer is not aligned then use an intermediate buffer */
 	if (!IS_ALIGNED((unsigned long)vaddr, 16)) {
-		src_tpage = alloc_page(GFP_KERNEL);
+		src_tpage = alloc_page(GFP_KERNEL_ACCOUNT);
 		if (!src_tpage)
 			return -ENOMEM;
 
@@ -853,7 +853,7 @@ static int __sev_dbg_encrypt_user(struct kvm *kvm, unsigned long paddr,
 	if (!IS_ALIGNED((unsigned long)dst_vaddr, 16) || !IS_ALIGNED(size, 16)) {
 		int dst_offset;
 
-		dst_tpage = alloc_page(GFP_KERNEL);
+		dst_tpage = alloc_page(GFP_KERNEL_ACCOUNT);
 		if (!dst_tpage) {
 			ret = -ENOMEM;
 			goto e_free;
@@ -1082,7 +1082,7 @@ static int sev_get_attestation_report(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		if (params.len > SEV_FW_BLOB_MAX_SIZE)
 			return -EINVAL;
 
-		blob = kmalloc(params.len, GFP_KERNEL_ACCOUNT);
+		blob = kzalloc(params.len, GFP_KERNEL_ACCOUNT);
 		if (!blob)
 			return -ENOMEM;
 
@@ -1164,7 +1164,7 @@ static int sev_send_start(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		return -EINVAL;
 
 	/* allocate the memory to hold the session data blob */
-	session_data = kmalloc(params.session_len, GFP_KERNEL_ACCOUNT);
+	session_data = kzalloc(params.session_len, GFP_KERNEL_ACCOUNT);
 	if (!session_data)
 		return -ENOMEM;
 
@@ -1277,7 +1277,7 @@ static int sev_send_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 	/* Check if we are crossing the page boundary */
 	offset = params.guest_uaddr & (PAGE_SIZE - 1);
-	if ((params.guest_len + offset > PAGE_SIZE))
+	if (params.guest_len > PAGE_SIZE || (params.guest_len + offset) > PAGE_SIZE)
 		return -EINVAL;
 
 	/* Pin guest memory */
@@ -1288,11 +1288,11 @@ static int sev_send_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 	/* allocate memory for header and transport buffer */
 	ret = -ENOMEM;
-	hdr = kmalloc(params.hdr_len, GFP_KERNEL_ACCOUNT);
+	hdr = kzalloc(params.hdr_len, GFP_KERNEL_ACCOUNT);
 	if (!hdr)
 		goto e_unpin;
 
-	trans_data = kmalloc(params.trans_len, GFP_KERNEL_ACCOUNT);
+	trans_data = kzalloc(params.trans_len, GFP_KERNEL_ACCOUNT);
 	if (!trans_data)
 		goto e_free_hdr;
 
@@ -1457,7 +1457,7 @@ static int sev_receive_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 	/* Check if we are crossing the page boundary */
 	offset = params.guest_uaddr & (PAGE_SIZE - 1);
-	if ((params.guest_len + offset > PAGE_SIZE))
+	if (params.guest_len > PAGE_SIZE || (params.guest_len + offset) > PAGE_SIZE)
 		return -EINVAL;
 
 	hdr = psp_copy_user_blob(params.hdr_uaddr, params.hdr_len);
@@ -1662,19 +1662,21 @@ int svm_register_enc_region(struct kvm *kvm,
 		goto e_free;
 	}
 
+	/*
+	 * The guest may change the memory encryption attribute from C=0 -> C=1
+	 * or vice versa for this memory range. Lets make sure caches are
+	 * flushed to ensure that guest data gets written into memory with
+	 * correct C-bit.  Note, this must be done before dropping kvm->lock,
+	 * as region and its array of pages can be freed by a different task
+	 * once kvm->lock is released.
+	 */
+	sev_clflush_pages(region->pages, region->npages);
+
 	region->uaddr = range->addr;
 	region->size = range->size;
 
 	list_add_tail(&region->list, &sev->regions_list);
 	mutex_unlock(&kvm->lock);
-
-	/*
-	 * The guest may change the memory encryption attribute from C=0 -> C=1
-	 * or vice versa for this memory range. Lets make sure caches are
-	 * flushed to ensure that guest data gets written into memory with
-	 * correct C-bit.
-	 */
-	sev_clflush_pages(region->pages, region->npages);
 
 	return ret;
 
@@ -1787,7 +1789,12 @@ int svm_vm_copy_asid_from(struct kvm *kvm, unsigned int source_fd)
 	mutex_unlock(&source_kvm->lock);
 	mutex_lock(&kvm->lock);
 
-	if (sev_guest(kvm)) {
+	/*
+	 * Disallow out-of-band SEV/SEV-ES init if the target is already an
+	 * SEV guest, or if vCPUs have been created.  KVM relies on vCPUs being
+	 * created after SEV/SEV-ES initialization, e.g. to init intercepts.
+	 */
+	if (sev_guest(kvm) || kvm->created_vcpus) {
 		ret = -EINVAL;
 		goto e_mirror_unlock;
 	}
@@ -1800,6 +1807,7 @@ int svm_vm_copy_asid_from(struct kvm *kvm, unsigned int source_fd)
 	mirror_sev->fd = source_sev.fd;
 	mirror_sev->es_active = source_sev.es_active;
 	mirror_sev->handle = source_sev.handle;
+	INIT_LIST_HEAD(&mirror_sev->regions_list);
 	/*
 	 * Do not copy ap_jump_table. Since the mirror does not share the same
 	 * KVM contexts as the original, and they may have different
@@ -1984,11 +1992,14 @@ static void sev_flush_guest_memory(struct vcpu_svm *svm, void *va,
 				   unsigned long len)
 {
 	/*
-	 * If hardware enforced cache coherency for encrypted mappings of the
-	 * same physical page is supported, nothing to do.
+	 * If CPU enforced cache coherency for encrypted mappings of the
+	 * same physical page is supported, use CLFLUSHOPT instead. NOTE: cache
+	 * flush is still needed in order to work properly with DMA devices.
 	 */
-	if (boot_cpu_has(X86_FEATURE_SME_COHERENT))
+	if (boot_cpu_has(X86_FEATURE_SME_COHERENT)) {
+		clflush_cache_range(va, PAGE_SIZE);
 		return;
+	}
 
 	/*
 	 * If the VM Page Flush MSR is supported, use it to flush the page
@@ -2025,6 +2036,14 @@ static void sev_flush_guest_memory(struct vcpu_svm *svm, void *va,
 	 * but if not, use WBINVD and issue a warning.
 	 */
 	WARN_ONCE(1, "Using WBINVD to flush guest memory\n");
+	wbinvd_on_all_cpus();
+}
+
+void sev_guest_memory_reclaimed(struct kvm *kvm)
+{
+	if (!sev_guest(kvm))
+		return;
+
 	wbinvd_on_all_cpus();
 }
 
@@ -2311,7 +2330,7 @@ void pre_sev_run(struct vcpu_svm *svm, int cpu)
 }
 
 #define GHCB_SCRATCH_AREA_LIMIT		(16ULL * PAGE_SIZE)
-static bool setup_vmgexit_scratch(struct vcpu_svm *svm, bool sync, u64 len)
+static int setup_vmgexit_scratch(struct vcpu_svm *svm, bool sync, u64 len)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
 	struct ghcb *ghcb = svm->ghcb;
@@ -2322,14 +2341,14 @@ static bool setup_vmgexit_scratch(struct vcpu_svm *svm, bool sync, u64 len)
 	scratch_gpa_beg = ghcb_get_sw_scratch(ghcb);
 	if (!scratch_gpa_beg) {
 		pr_err("vmgexit: scratch gpa not provided\n");
-		return false;
+		return -EINVAL;
 	}
 
 	scratch_gpa_end = scratch_gpa_beg + len;
 	if (scratch_gpa_end < scratch_gpa_beg) {
 		pr_err("vmgexit: scratch length (%#llx) not valid for scratch address (%#llx)\n",
 		       len, scratch_gpa_beg);
-		return false;
+		return -EINVAL;
 	}
 
 	if ((scratch_gpa_beg & PAGE_MASK) == control->ghcb_gpa) {
@@ -2347,7 +2366,7 @@ static bool setup_vmgexit_scratch(struct vcpu_svm *svm, bool sync, u64 len)
 		    scratch_gpa_end > ghcb_scratch_end) {
 			pr_err("vmgexit: scratch area is outside of GHCB shared buffer area (%#llx - %#llx)\n",
 			       scratch_gpa_beg, scratch_gpa_end);
-			return false;
+			return -EINVAL;
 		}
 
 		scratch_va = (void *)svm->ghcb;
@@ -2360,18 +2379,18 @@ static bool setup_vmgexit_scratch(struct vcpu_svm *svm, bool sync, u64 len)
 		if (len > GHCB_SCRATCH_AREA_LIMIT) {
 			pr_err("vmgexit: scratch area exceeds KVM limits (%#llx requested, %#llx limit)\n",
 			       len, GHCB_SCRATCH_AREA_LIMIT);
-			return false;
+			return -EINVAL;
 		}
 		scratch_va = kzalloc(len, GFP_KERNEL_ACCOUNT);
 		if (!scratch_va)
-			return false;
+			return -ENOMEM;
 
 		if (kvm_read_guest(svm->vcpu.kvm, scratch_gpa_beg, scratch_va, len)) {
 			/* Unable to copy scratch area from guest */
 			pr_err("vmgexit: kvm_read_guest for scratch area failed\n");
 
 			kfree(scratch_va);
-			return false;
+			return -EFAULT;
 		}
 
 		/*
@@ -2387,7 +2406,7 @@ static bool setup_vmgexit_scratch(struct vcpu_svm *svm, bool sync, u64 len)
 	svm->ghcb_sa = scratch_va;
 	svm->ghcb_sa_len = len;
 
-	return true;
+	return 0;
 }
 
 static void set_ghcb_msr_bits(struct vcpu_svm *svm, u64 value, u64 mask,
@@ -2526,10 +2545,10 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 	ghcb_set_sw_exit_info_1(ghcb, 0);
 	ghcb_set_sw_exit_info_2(ghcb, 0);
 
-	ret = -EINVAL;
 	switch (exit_code) {
 	case SVM_VMGEXIT_MMIO_READ:
-		if (!setup_vmgexit_scratch(svm, true, control->exit_info_2))
+		ret = setup_vmgexit_scratch(svm, true, control->exit_info_2);
+		if (ret)
 			break;
 
 		ret = kvm_sev_es_mmio_read(vcpu,
@@ -2538,7 +2557,8 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 					   svm->ghcb_sa);
 		break;
 	case SVM_VMGEXIT_MMIO_WRITE:
-		if (!setup_vmgexit_scratch(svm, false, control->exit_info_2))
+		ret = setup_vmgexit_scratch(svm, false, control->exit_info_2);
+		if (ret)
 			break;
 
 		ret = kvm_sev_es_mmio_write(vcpu,
@@ -2581,6 +2601,7 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		vcpu_unimpl(vcpu,
 			    "vmgexit: unsupported event - exit_info_1=%#llx, exit_info_2=%#llx\n",
 			    control->exit_info_1, control->exit_info_2);
+		ret = -EINVAL;
 		break;
 	default:
 		ret = svm_invoke_exit_handler(vcpu, exit_code);
@@ -2593,6 +2614,7 @@ int sev_es_string_io(struct vcpu_svm *svm, int size, unsigned int port, int in)
 {
 	int count;
 	int bytes;
+	int r;
 
 	if (svm->vmcb->control.exit_info_2 > INT_MAX)
 		return -EINVAL;
@@ -2601,8 +2623,9 @@ int sev_es_string_io(struct vcpu_svm *svm, int size, unsigned int port, int in)
 	if (unlikely(check_mul_overflow(count, size, &bytes)))
 		return -EINVAL;
 
-	if (!setup_vmgexit_scratch(svm, in, bytes))
-		return -EINVAL;
+	r = setup_vmgexit_scratch(svm, in, bytes);
+	if (r)
+		return r;
 
 	return kvm_sev_es_string_io(&svm->vcpu, size, port, svm->ghcb_sa, count, in);
 }

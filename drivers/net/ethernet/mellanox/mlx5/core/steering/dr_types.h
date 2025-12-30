@@ -4,7 +4,7 @@
 #ifndef	_DR_TYPES_
 #define	_DR_TYPES_
 
-#include <linux/mlx5/driver.h>
+#include <linux/mlx5/vport.h>
 #include <linux/refcount.h>
 #include "fs_core.h"
 #include "wq.h"
@@ -14,7 +14,6 @@
 
 #define DR_RULE_MAX_STES 18
 #define DR_ACTION_MAX_STES 5
-#define WIRE_PORT 0xFFFF
 #define DR_STE_SVLAN 0x1
 #define DR_STE_CVLAN 0x2
 #define DR_SZ_MATCH_PARAM (MLX5_ST_SZ_DW_MATCH_PARAM * 4)
@@ -740,6 +739,16 @@ struct mlx5dr_match_param {
 				       (_misc3)->icmpv4_code || \
 				       (_misc3)->icmpv4_header_data)
 
+#define DR_MASK_IS_SRC_IP_SET(_spec) ((_spec)->src_ip_127_96 || \
+				      (_spec)->src_ip_95_64  || \
+				      (_spec)->src_ip_63_32  || \
+				      (_spec)->src_ip_31_0)
+
+#define DR_MASK_IS_DST_IP_SET(_spec) ((_spec)->dst_ip_127_96 || \
+				      (_spec)->dst_ip_95_64  || \
+				      (_spec)->dst_ip_63_32  || \
+				      (_spec)->dst_ip_31_0)
+
 struct mlx5dr_esw_caps {
 	u64 drop_icm_address_rx;
 	u64 drop_icm_address_tx;
@@ -881,7 +890,7 @@ struct mlx5dr_matcher {
 	struct mlx5dr_table *tbl;
 	struct mlx5dr_matcher_rx_tx rx;
 	struct mlx5dr_matcher_rx_tx tx;
-	struct list_head matcher_list;
+	struct list_head list_node;
 	u32 prio;
 	struct mlx5dr_match_param mask;
 	u8 match_criteria;
@@ -1106,10 +1115,10 @@ static inline struct mlx5dr_cmd_vport_cap *
 mlx5dr_get_vport_cap(struct mlx5dr_cmd_caps *caps, u32 vport)
 {
 	if (!caps->vports_caps ||
-	    (vport >= caps->num_vports && vport != WIRE_PORT))
+	    (vport >= caps->num_vports && vport != MLX5_VPORT_UPLINK))
 		return NULL;
 
-	if (vport == WIRE_PORT)
+	if (vport == MLX5_VPORT_UPLINK)
 		vport = caps->num_vports;
 
 	return &caps->vports_caps[vport];
@@ -1384,7 +1393,8 @@ int mlx5dr_fw_create_md_tbl(struct mlx5dr_domain *dmn,
 			    bool reformat_req,
 			    u32 *tbl_id,
 			    u32 *group_id,
-			    bool ignore_flow_level);
+			    bool ignore_flow_level,
+			    u32 flow_source);
 void mlx5dr_fw_destroy_md_tbl(struct mlx5dr_domain *dmn, u32 tbl_id,
 			      u32 group_id);
 #endif  /* _DR_TYPES_H_ */

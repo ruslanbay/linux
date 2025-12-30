@@ -30,6 +30,12 @@ static int mctp_release(struct socket *sock)
 	return 0;
 }
 
+/* Generic sockaddr checks, padding checks only so far */
+static bool mctp_sockaddr_is_ok(const struct sockaddr_mctp *addr)
+{
+	return !addr->__smctp_pad0 && !addr->__smctp_pad1;
+}
+
 static int mctp_bind(struct socket *sock, struct sockaddr *addr, int addrlen)
 {
 	struct sock *sk = sock->sk;
@@ -49,9 +55,11 @@ static int mctp_bind(struct socket *sock, struct sockaddr *addr, int addrlen)
 	/* it's a valid sockaddr for MCTP, cast and do protocol checks */
 	smctp = (struct sockaddr_mctp *)addr;
 
+	if (!mctp_sockaddr_is_ok(smctp))
+		return -EINVAL;
+
 	lock_sock(sk);
 
-	/* TODO: allow rebind */
 	if (sk_hashed(sk)) {
 		rc = -EADDRINUSE;
 		goto out_release;
@@ -82,6 +90,8 @@ static int mctp_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
 		if (addrlen < sizeof(struct sockaddr_mctp))
 			return -EINVAL;
 		if (addr->smctp_family != AF_MCTP)
+			return -EINVAL;
+		if (!mctp_sockaddr_is_ok(addr))
 			return -EINVAL;
 		if (addr->smctp_tag & ~(MCTP_TAG_MASK | MCTP_TAG_OWNER))
 			return -EINVAL;
@@ -172,11 +182,13 @@ static int mctp_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 
 		addr = msg->msg_name;
 		addr->smctp_family = AF_MCTP;
+		addr->__smctp_pad0 = 0;
 		addr->smctp_network = cb->net;
 		addr->smctp_addr.s_addr = hdr->src;
 		addr->smctp_type = type;
 		addr->smctp_tag = hdr->flags_seq_tag &
 					(MCTP_HDR_TAG_MASK | MCTP_HDR_FLAG_TO);
+		addr->__smctp_pad1 = 0;
 		msg->msg_namelen = sizeof(*addr);
 	}
 
@@ -239,12 +251,36 @@ static void mctp_sk_close(struct sock *sk, long timeout)
 static int mctp_sk_hash(struct sock *sk)
 {
 	struct net *net = sock_net(sk);
+	struct sock *existing;
+	struct mctp_sock *msk;
+	int rc;
+
+	msk = container_of(sk, struct mctp_sock, sk);
+
+	/* Bind lookup runs under RCU, remain live during that. */
+	sock_set_flag(sk, SOCK_RCU_FREE);
 
 	mutex_lock(&net->mctp.bind_lock);
-	sk_add_node_rcu(sk, &net->mctp.binds);
-	mutex_unlock(&net->mctp.bind_lock);
 
-	return 0;
+	/* Prevent duplicate binds. */
+	sk_for_each(existing, &net->mctp.binds) {
+		struct mctp_sock *mex =
+			container_of(existing, struct mctp_sock, sk);
+
+		if (mex->bind_type == msk->bind_type &&
+		    mex->bind_addr == msk->bind_addr &&
+		    mex->bind_net == msk->bind_net) {
+			rc = -EADDRINUSE;
+			goto out;
+		}
+	}
+
+	sk_add_node_rcu(sk, &net->mctp.binds);
+	rc = 0;
+
+out:
+	mutex_unlock(&net->mctp.bind_lock);
+	return rc;
 }
 
 static void mctp_sk_unhash(struct sock *sk)
@@ -275,9 +311,15 @@ static void mctp_sk_unhash(struct sock *sk)
 
 		kfree_rcu(key, rcu);
 	}
+	sock_set_flag(sk, SOCK_DEAD);
 	spin_unlock_irqrestore(&net->mctp.keys_lock, flags);
 
 	synchronize_rcu();
+}
+
+static void mctp_sk_destruct(struct sock *sk)
+{
+	skb_queue_purge(&sk->sk_receive_queue);
 }
 
 static struct proto mctp_proto = {
@@ -316,6 +358,7 @@ static int mctp_pf_create(struct net *net, struct socket *sock,
 		return -ENOMEM;
 
 	sock_init_data(sock, sk);
+	sk->sk_destruct = mctp_sk_destruct;
 
 	rc = 0;
 	if (sk->sk_prot->init)
@@ -362,12 +405,18 @@ static __init int mctp_init(void)
 
 	rc = mctp_neigh_init();
 	if (rc)
-		goto err_unreg_proto;
+		goto err_unreg_routes;
 
-	mctp_device_init();
+	rc = mctp_device_init();
+	if (rc)
+		goto err_unreg_neigh;
 
 	return 0;
 
+err_unreg_neigh:
+	mctp_neigh_exit();
+err_unreg_routes:
+	mctp_routes_exit();
 err_unreg_proto:
 	proto_unregister(&mctp_proto);
 err_unreg_sock:

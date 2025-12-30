@@ -2704,7 +2704,7 @@ bnx2_alloc_bad_rbuf(struct bnx2 *bp)
 }
 
 static void
-bnx2_set_mac_addr(struct bnx2 *bp, u8 *mac_addr, u32 pos)
+bnx2_set_mac_addr(struct bnx2 *bp, const u8 *mac_addr, u32 pos)
 {
 	u32 val;
 
@@ -8212,7 +8212,7 @@ bnx2_init_board(struct pci_dev *pdev, struct net_device *dev)
 		rc = dma_set_coherent_mask(&pdev->dev, persist_dma_mask);
 		if (rc) {
 			dev_err(&pdev->dev,
-				"pci_set_consistent_dma_mask failed, aborting\n");
+				"dma_set_coherent_mask failed, aborting\n");
 			goto err_out_unmap;
 		}
 	} else if ((rc = dma_set_mask(&pdev->dev, DMA_BIT_MASK(32))) != 0) {

@@ -79,7 +79,7 @@ extern struct auxiliary_driver i40iw_auxiliary_drv;
 
 #define MAX_DPC_ITERATIONS	128
 
-#define IRDMA_EVENT_TIMEOUT		50000
+#define IRDMA_EVENT_TIMEOUT_MS		5000
 #define IRDMA_VCHNL_EVENT_TIMEOUT	100000
 #define IRDMA_RST_TIMEOUT_HZ		4
 
@@ -160,8 +160,8 @@ struct irdma_cqp_request {
 	void (*callback_fcn)(struct irdma_cqp_request *cqp_request);
 	void *param;
 	struct irdma_cqp_compl_info compl_info;
+	bool request_done; /* READ/WRITE_ONCE macros operate on it */
 	bool waiting:1;
-	bool request_done:1;
 	bool dynamic:1;
 };
 
@@ -237,7 +237,7 @@ struct irdma_qv_info {
 
 struct irdma_qvlist_info {
 	u32 num_vectors;
-	struct irdma_qv_info qv_info[1];
+	struct irdma_qv_info qv_info[];
 };
 
 struct irdma_gen_ops {
@@ -257,6 +257,7 @@ struct irdma_pci_f {
 	u8 *mem_rsrc;
 	u8 rdma_ver;
 	u8 rst_to;
+	u8 pf_id;
 	enum irdma_protocol_used protocol_used;
 	u32 sd_type;
 	u32 msix_count;
@@ -541,6 +542,7 @@ int irdma_ah_cqp_op(struct irdma_pci_f *rf, struct irdma_sc_ah *sc_ah, u8 cmd,
 		    void (*callback_fcn)(struct irdma_cqp_request *cqp_request),
 		    void *cb_param);
 void irdma_gsi_ud_qp_ah_cb(struct irdma_cqp_request *cqp_request);
+bool irdma_cq_empty(struct irdma_cq *iwcq);
 int irdma_inetaddr_event(struct notifier_block *notifier, unsigned long event,
 			 void *ptr);
 int irdma_inet6addr_event(struct notifier_block *notifier, unsigned long event,

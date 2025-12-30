@@ -265,7 +265,7 @@ show_shost_supported_mode(struct device *dev, struct device_attribute *attr,
 	return show_shost_mode(supported_mode, buf);
 }
 
-static DEVICE_ATTR(supported_mode, S_IRUGO | S_IWUSR, show_shost_supported_mode, NULL);
+static DEVICE_ATTR(supported_mode, S_IRUGO, show_shost_supported_mode, NULL);
 
 static ssize_t
 show_shost_active_mode(struct device *dev,
@@ -279,7 +279,7 @@ show_shost_active_mode(struct device *dev,
 		return show_shost_mode(shost->active_mode, buf);
 }
 
-static DEVICE_ATTR(active_mode, S_IRUGO | S_IWUSR, show_shost_active_mode, NULL);
+static DEVICE_ATTR(active_mode, S_IRUGO, show_shost_active_mode, NULL);
 
 static int check_reset_type(const char *str)
 {
@@ -797,6 +797,7 @@ store_state_field(struct device *dev, struct device_attribute *attr,
 	int i, ret;
 	struct scsi_device *sdev = to_scsi_device(dev);
 	enum scsi_device_state state = 0;
+	bool rescan_dev = false;
 
 	for (i = 0; i < ARRAY_SIZE(sdev_states); i++) {
 		const int len = strlen(sdev_states[i].name);
@@ -815,20 +816,35 @@ store_state_field(struct device *dev, struct device_attribute *attr,
 	}
 
 	mutex_lock(&sdev->state_mutex);
-	ret = scsi_device_set_state(sdev, state);
-	/*
-	 * If the device state changes to SDEV_RUNNING, we need to
-	 * run the queue to avoid I/O hang, and rescan the device
-	 * to revalidate it. Running the queue first is necessary
-	 * because another thread may be waiting inside
-	 * blk_mq_freeze_queue_wait() and because that call may be
-	 * waiting for pending I/O to finish.
-	 */
-	if (ret == 0 && state == SDEV_RUNNING) {
+	switch (sdev->sdev_state) {
+	case SDEV_RUNNING:
+	case SDEV_OFFLINE:
+		break;
+	default:
+		mutex_unlock(&sdev->state_mutex);
+		return -EINVAL;
+	}
+	if (sdev->sdev_state == SDEV_RUNNING && state == SDEV_RUNNING) {
+		ret = 0;
+	} else {
+		ret = scsi_device_set_state(sdev, state);
+		if (ret == 0 && state == SDEV_RUNNING)
+			rescan_dev = true;
+	}
+	mutex_unlock(&sdev->state_mutex);
+
+	if (rescan_dev) {
+		/*
+		 * If the device state changes to SDEV_RUNNING, we need to
+		 * run the queue to avoid I/O hang, and rescan the device
+		 * to revalidate it. Running the queue first is necessary
+		 * because another thread may be waiting inside
+		 * blk_mq_freeze_queue_wait() and because that call may be
+		 * waiting for pending I/O to finish.
+		 */
 		blk_mq_run_hw_queues(sdev->request_queue, true);
 		scsi_rescan_device(dev);
 	}
-	mutex_unlock(&sdev->state_mutex);
 
 	return ret == 0 ? count : -EINVAL;
 }
@@ -1388,6 +1404,7 @@ int scsi_sysfs_add_sdev(struct scsi_device *sdev)
 			 * We're treating error on bsg register as non-fatal, so
 			 * pretend nothing went wrong.
 			 */
+			error = PTR_ERR(sdev->bsg_dev);
 			sdev_printk(KERN_INFO, sdev,
 				    "Failed to register bsg queue, errno=%d\n",
 				    error);
@@ -1473,6 +1490,7 @@ void __scsi_remove_device(struct scsi_device *sdev)
 	mutex_unlock(&sdev->state_mutex);
 
 	blk_cleanup_queue(sdev->request_queue);
+	kref_put(&sdev->host->tagset_refcnt, scsi_mq_free_tags);
 	cancel_work_sync(&sdev->requeue_work);
 
 	if (sdev->host->hostt->slave_destroy)

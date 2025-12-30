@@ -5,6 +5,7 @@
  * Copyright (C) 2016-2017 Intel Deutschland GmbH
  */
 #include <linux/vmalloc.h>
+#include <linux/err.h>
 #include <linux/ieee80211.h>
 #include <linux/netdevice.h>
 
@@ -1930,6 +1931,11 @@ static ssize_t iwl_dbgfs_mem_read(struct file *file, char __user *user_buf,
 	if (ret < 0)
 		return ret;
 
+	if (iwl_rx_packet_payload_len(hcmd.resp_pkt) < sizeof(*rsp)) {
+		ret = -EIO;
+		goto out;
+	}
+
 	rsp = (void *)hcmd.resp_pkt->data;
 	if (le32_to_cpu(rsp->status) != DEBUG_MEM_STATUS_SUCCESS) {
 		ret = -ENXIO;
@@ -1944,7 +1950,7 @@ static ssize_t iwl_dbgfs_mem_read(struct file *file, char __user *user_buf,
 		goto out;
 	}
 
-	ret = len - copy_to_user(user_buf, (void *)rsp->data + delta, len);
+	ret = len - copy_to_user(user_buf, (u8 *)rsp->data + delta, len);
 	*ppos += ret;
 
 out:
@@ -2007,6 +2013,11 @@ static ssize_t iwl_dbgfs_mem_write(struct file *file,
 	if (ret < 0)
 		return ret;
 
+	if (iwl_rx_packet_payload_len(hcmd.resp_pkt) < sizeof(*rsp)) {
+		ret = -EIO;
+		goto out;
+	}
+
 	rsp = (void *)hcmd.resp_pkt->data;
 	if (rsp->status != DEBUG_MEM_STATUS_SUCCESS) {
 		ret = -ENXIO;
@@ -2044,7 +2055,6 @@ void iwl_mvm_sta_add_debugfs(struct ieee80211_hw *hw,
 void iwl_mvm_dbgfs_register(struct iwl_mvm *mvm)
 {
 	struct dentry *bcast_dir __maybe_unused;
-	char buf[100];
 
 	spin_lock_init(&mvm->drv_stats_lock);
 
@@ -2140,6 +2150,11 @@ void iwl_mvm_dbgfs_register(struct iwl_mvm *mvm)
 	 * Create a symlink with mac80211. It will be removed when mac80211
 	 * exists (before the opmode exists which removes the target.)
 	 */
-	snprintf(buf, 100, "../../%pd2", mvm->debugfs_dir->d_parent);
-	debugfs_create_symlink("iwlwifi", mvm->hw->wiphy->debugfsdir, buf);
+	if (!IS_ERR(mvm->debugfs_dir)) {
+		char buf[100];
+
+		snprintf(buf, 100, "../../%pd2", mvm->debugfs_dir->d_parent);
+		debugfs_create_symlink("iwlwifi", mvm->hw->wiphy->debugfsdir,
+				       buf);
+	}
 }

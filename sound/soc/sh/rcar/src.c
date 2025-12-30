@@ -463,11 +463,14 @@ static int rsnd_src_init(struct rsnd_mod *mod,
 			 struct rsnd_priv *priv)
 {
 	struct rsnd_src *src = rsnd_mod_to_src(mod);
+	int ret;
 
 	/* reset sync convert_rate */
 	src->sync.val = 0;
 
-	rsnd_mod_power_on(mod);
+	ret = rsnd_mod_power_on(mod);
+	if (ret < 0)
+		return ret;
 
 	rsnd_src_activation(mod);
 
@@ -525,6 +528,22 @@ static irqreturn_t rsnd_src_interrupt(int irq, void *data)
 	rsnd_mod_interrupt(mod, __rsnd_src_interrupt);
 
 	return IRQ_HANDLED;
+}
+
+static int rsnd_src_kctrl_accept_runtime(struct rsnd_dai_stream *io)
+{
+	struct snd_pcm_runtime *runtime = rsnd_io_to_runtime(io);
+
+	if (!runtime) {
+		struct rsnd_priv *priv = rsnd_io_to_priv(io);
+		struct device *dev = rsnd_priv_to_dev(priv);
+
+		dev_warn(dev, "\"SRC Out Rate\" can use during running\n");
+
+		return 0;
+	}
+
+	return 1;
 }
 
 static int rsnd_src_probe_(struct rsnd_mod *mod,
@@ -590,7 +609,7 @@ static int rsnd_src_pcm_new(struct rsnd_mod *mod,
 			       rsnd_io_is_play(io) ?
 			       "SRC Out Rate" :
 			       "SRC In Rate",
-			       rsnd_kctrl_accept_runtime,
+			       rsnd_src_kctrl_accept_runtime,
 			       rsnd_src_set_convert_rate,
 			       &src->sync, 192000);
 
@@ -676,7 +695,12 @@ int rsnd_src_probe(struct rsnd_priv *priv)
 		if (!of_device_is_available(np))
 			goto skip;
 
-		i = rsnd_node_fixed_index(np, SRC_NAME, i);
+		i = rsnd_node_fixed_index(dev, np, SRC_NAME, i);
+		if (i < 0) {
+			ret = -EINVAL;
+			of_node_put(np);
+			goto rsnd_src_probe_done;
+		}
 
 		src = rsnd_src_get(priv, i);
 

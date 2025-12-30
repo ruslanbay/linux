@@ -289,15 +289,10 @@ static long hist_time(unsigned long htime)
 	return htime;
 }
 
-static void he_stat__add_period(struct he_stat *he_stat, u64 period,
-				u64 weight, u64 ins_lat, u64 p_stage_cyc)
+static void he_stat__add_period(struct he_stat *he_stat, u64 period)
 {
-
 	he_stat->period		+= period;
-	he_stat->weight		+= weight;
 	he_stat->nr_events	+= 1;
-	he_stat->ins_lat	+= ins_lat;
-	he_stat->p_stage_cyc	+= p_stage_cyc;
 }
 
 static void he_stat__add_stat(struct he_stat *dest, struct he_stat *src)
@@ -308,9 +303,6 @@ static void he_stat__add_stat(struct he_stat *dest, struct he_stat *src)
 	dest->period_guest_sys	+= src->period_guest_sys;
 	dest->period_guest_us	+= src->period_guest_us;
 	dest->nr_events		+= src->nr_events;
-	dest->weight		+= src->weight;
-	dest->ins_lat		+= src->ins_lat;
-	dest->p_stage_cyc		+= src->p_stage_cyc;
 }
 
 static void he_stat__decay(struct he_stat *he_stat)
@@ -598,9 +590,6 @@ static struct hist_entry *hists__findnew_entry(struct hists *hists,
 	struct hist_entry *he;
 	int64_t cmp;
 	u64 period = entry->stat.period;
-	u64 weight = entry->stat.weight;
-	u64 ins_lat = entry->stat.ins_lat;
-	u64 p_stage_cyc = entry->stat.p_stage_cyc;
 	bool leftmost = true;
 
 	p = &hists->entries_in->rb_root.rb_node;
@@ -619,11 +608,11 @@ static struct hist_entry *hists__findnew_entry(struct hists *hists,
 
 		if (!cmp) {
 			if (sample_self) {
-				he_stat__add_period(&he->stat, period, weight, ins_lat, p_stage_cyc);
+				he_stat__add_period(&he->stat, period);
 				hist_entry__add_callchain_period(he, period);
 			}
 			if (symbol_conf.cumulate_callchain)
-				he_stat__add_period(he->stat_acc, period, weight, ins_lat, p_stage_cyc);
+				he_stat__add_period(he->stat_acc, period);
 
 			/*
 			 * This mem info was allocated from sample__resolve_mem
@@ -639,7 +628,12 @@ static struct hist_entry *hists__findnew_entry(struct hists *hists,
 			 * mis-adjust symbol addresses when computing
 			 * the history counter to increment.
 			 */
-			if (he->ms.map != entry->ms.map) {
+			if (hists__has(hists, sym) && he->ms.map != entry->ms.map) {
+				if (he->ms.sym) {
+					u64 addr = he->ms.sym->start;
+					he->ms.sym = map__find_symbol(entry->ms.map, addr);
+				}
+
 				map__put(he->ms.map);
 				he->ms.map = map__get(entry->ms.map);
 			}
@@ -733,9 +727,6 @@ __hists__add_entry(struct hists *hists,
 		.stat = {
 			.nr_events = 1,
 			.period	= sample->period,
-			.weight = sample->weight,
-			.ins_lat = sample->ins_lat,
-			.p_stage_cyc = sample->p_stage_cyc,
 		},
 		.parent = sym_parent,
 		.filtered = symbol__parent_filter(sym_parent) | al->filtered,
@@ -748,6 +739,9 @@ __hists__add_entry(struct hists *hists,
 		.raw_size = sample->raw_size,
 		.ops = ops,
 		.time = hist_time(sample->time),
+		.weight = sample->weight,
+		.ins_lat = sample->ins_lat,
+		.p_stage_cyc = sample->p_stage_cyc,
 	}, *he = hists__findnew_entry(hists, &entry, al, sample_self);
 
 	if (!hists->has_callchains && he && he->callchain_size != 0)
@@ -2646,8 +2640,6 @@ void hist__account_cycles(struct branch_stack *bs, struct addr_location *al,
 
 	/* If we have branch cycles always annotate them. */
 	if (bs && bs->nr && entries[0].flags.cycles) {
-		int i;
-
 		bi = sample__resolve_bstack(sample, al);
 		if (bi) {
 			struct addr_map_symbol *prev = NULL;
@@ -2662,7 +2654,7 @@ void hist__account_cycles(struct branch_stack *bs, struct addr_location *al,
 			 * Note that perf stores branches reversed from
 			 * program order!
 			 */
-			for (i = bs->nr - 1; i >= 0; i--) {
+			for (int i = bs->nr - 1; i >= 0; i--) {
 				addr_map_symbol__account_cycles(&bi[i].from,
 					nonany_branch_mode ? NULL : prev,
 					bi[i].flags.cycles);
@@ -2670,6 +2662,12 @@ void hist__account_cycles(struct branch_stack *bs, struct addr_location *al,
 
 				if (total_cycles)
 					*total_cycles += bi[i].flags.cycles;
+			}
+			for (unsigned int i = 0; i < bs->nr; i++) {
+				map__put(bi[i].to.ms.map);
+				maps__put(bi[i].to.ms.maps);
+				map__put(bi[i].from.ms.map);
+				maps__put(bi[i].from.ms.maps);
 			}
 			free(bi);
 		}

@@ -32,6 +32,7 @@
 #include <linux/perf_event.h>
 #include <linux/extable.h>
 #include <linux/log2.h>
+#include <linux/nospec.h>
 
 #include <asm/barrier.h>
 #include <asm/unaligned.h>
@@ -66,11 +67,13 @@ void *bpf_internal_load_pointer_neg_helper(const struct sk_buff *skb, int k, uns
 {
 	u8 *ptr = NULL;
 
-	if (k >= SKF_NET_OFF)
+	if (k >= SKF_NET_OFF) {
 		ptr = skb_network_header(skb) + k - SKF_NET_OFF;
-	else if (k >= SKF_LL_OFF)
+	} else if (k >= SKF_LL_OFF) {
+		if (unlikely(!skb_mac_header_was_set(skb)))
+			return NULL;
 		ptr = skb_mac_header(skb) + k - SKF_LL_OFF;
-
+	}
 	if (ptr >= skb->head && ptr + size <= skb_tail_pointer(skb))
 		return ptr;
 
@@ -389,6 +392,13 @@ static int bpf_adj_branches(struct bpf_prog *prog, u32 pos, s32 end_old,
 			i = end_new;
 			insn = prog->insnsi + end_old;
 		}
+		if (bpf_pseudo_func(insn)) {
+			ret = bpf_adj_delta_to_imm(insn, pos, end_old,
+						   end_new, i, probe_pass);
+			if (ret)
+				return ret;
+			continue;
+		}
 		code = insn->code;
 		if ((BPF_CLASS(code) != BPF_JMP &&
 		     BPF_CLASS(code) != BPF_JMP32) ||
@@ -494,6 +504,8 @@ struct bpf_prog *bpf_patch_insn_single(struct bpf_prog *prog, u32 off,
 
 int bpf_remove_insns(struct bpf_prog *prog, u32 off, u32 cnt)
 {
+	int err;
+
 	/* Branch offsets can't overflow when program is shrinking, no need
 	 * to call bpf_adj_branches(..., true) here
 	 */
@@ -501,7 +513,9 @@ int bpf_remove_insns(struct bpf_prog *prog, u32 off, u32 cnt)
 		sizeof(struct bpf_insn) * (prog->len - off - cnt));
 	prog->len -= cnt;
 
-	return WARN_ON_ONCE(bpf_adj_branches(prog, off, off + cnt, off, false));
+	err = bpf_adj_branches(prog, off, off + cnt, off, false);
+	WARN_ON_ONCE(err);
+	return err;
 }
 
 static void bpf_prog_kallsyms_del_subprogs(struct bpf_prog *fp)
@@ -595,7 +609,11 @@ static __always_inline int bpf_tree_comp(void *key, struct latch_tree_node *n)
 
 	if (val < ksym->start)
 		return -1;
-	if (val >= ksym->end)
+	/* Ensure that we detect return addresses as part of the program, when
+	 * the final instruction is a call for a program part of the stack
+	 * trace. Therefore, do val > ksym->end instead of val >= ksym->end.
+	 */
+	if (val > ksym->end)
 		return  1;
 
 	return 0;
@@ -819,7 +837,7 @@ static int __init bpf_jit_charge_init(void)
 {
 	/* Only used as heuristic here to derive limit. */
 	bpf_jit_limit_max = bpf_jit_alloc_exec_limit();
-	bpf_jit_limit = min_t(u64, round_up(bpf_jit_limit_max >> 2,
+	bpf_jit_limit = min_t(u64, round_up(bpf_jit_limit_max >> 1,
 					    PAGE_SIZE), LONG_MAX);
 	return 0;
 }
@@ -1639,9 +1657,7 @@ out:
 		 * reuse preexisting logic from Spectre v1 mitigation that
 		 * happens to produce the required code on x86 for v4 as well.
 		 */
-#ifdef CONFIG_X86
 		barrier_nospec();
-#endif
 		CONT;
 #define LDST(SIZEOP, SIZE)						\
 	STX_MEM_##SIZEOP:						\
@@ -1652,6 +1668,11 @@ out:
 		CONT;							\
 	LDX_MEM_##SIZEOP:						\
 		DST = *(SIZE *)(unsigned long) (SRC + insn->off);	\
+		CONT;							\
+	LDX_PROBE_MEM_##SIZEOP:						\
+		bpf_probe_read_kernel(&DST, sizeof(SIZE),		\
+				      (const void *)(long) (SRC + insn->off));	\
+		DST = *((SIZE *)&DST);					\
 		CONT;
 
 	LDST(B,   u8)
@@ -1659,15 +1680,6 @@ out:
 	LDST(W,  u32)
 	LDST(DW, u64)
 #undef LDST
-#define LDX_PROBE(SIZEOP, SIZE)							\
-	LDX_PROBE_MEM_##SIZEOP:							\
-		bpf_probe_read_kernel(&DST, SIZE, (const void *)(long) (SRC + insn->off));	\
-		CONT;
-	LDX_PROBE(B,  1)
-	LDX_PROBE(H,  2)
-	LDX_PROBE(W,  4)
-	LDX_PROBE(DW, 8)
-#undef LDX_PROBE
 
 #define ATOMIC_ALU_OP(BOP, KOP)						\
 		case BOP:						\
@@ -1820,29 +1832,72 @@ static unsigned int __bpf_prog_ret0_warn(const void *ctx,
 }
 #endif
 
+static bool __bpf_prog_map_compatible(struct bpf_map *map,
+				      const struct bpf_prog *fp)
+{
+	enum bpf_prog_type prog_type = fp->aux->dst_prog ? fp->aux->dst_prog->type : fp->type;
+	struct bpf_prog_aux *aux = fp->aux;
+	enum bpf_cgroup_storage_type i;
+	bool ret = false;
+	u64 cookie;
+
+	if (fp->kprobe_override)
+		return ret;
+
+	spin_lock(&map->owner_lock);
+	/* There's no owner yet where we could check for compatibility. */
+	if (!map->owner) {
+		map->owner = bpf_map_owner_alloc(map);
+		if (!map->owner)
+			goto err;
+		map->owner->type  = prog_type;
+		map->owner->jited = fp->jited;
+		/* Note: xdp_has_frags doesn't exist in aux yet in our branch */
+		/* map->owner->xdp_has_frags = aux->xdp_has_frags; */
+		map->owner->attach_func_proto = aux->attach_func_proto;
+		for_each_cgroup_storage_type(i) {
+			map->owner->storage_cookie[i] =
+				aux->cgroup_storage[i] ?
+				aux->cgroup_storage[i]->cookie : 0;
+		}
+		ret = true;
+	} else {
+		ret = map->owner->type  == prog_type &&
+		      map->owner->jited == fp->jited;
+		/* Note: xdp_has_frags check would go here when available */
+		/* && map->owner->xdp_has_frags == aux->xdp_has_frags; */
+		for_each_cgroup_storage_type(i) {
+			if (!ret)
+				break;
+			cookie = aux->cgroup_storage[i] ?
+				 aux->cgroup_storage[i]->cookie : 0;
+			ret = map->owner->storage_cookie[i] == cookie ||
+			      !cookie;
+		}
+		if (ret &&
+		    map->owner->attach_func_proto != aux->attach_func_proto) {
+			switch (prog_type) {
+			case BPF_PROG_TYPE_TRACING:
+			case BPF_PROG_TYPE_LSM:
+			case BPF_PROG_TYPE_EXT:
+			case BPF_PROG_TYPE_STRUCT_OPS:
+				ret = false;
+				break;
+			default:
+				break;
+			}
+		}
+	}
+err:
+	spin_unlock(&map->owner_lock);
+	return ret;
+}
+
 bool bpf_prog_array_compatible(struct bpf_array *array,
 			       const struct bpf_prog *fp)
 {
-	bool ret;
-
-	if (fp->kprobe_override)
-		return false;
-
-	spin_lock(&array->aux->owner.lock);
-
-	if (!array->aux->owner.type) {
-		/* There's no owner yet where we could check for
-		 * compatibility.
-		 */
-		array->aux->owner.type  = fp->type;
-		array->aux->owner.jited = fp->jited;
-		ret = true;
-	} else {
-		ret = array->aux->owner.type  == fp->type &&
-		      array->aux->owner.jited == fp->jited;
-	}
-	spin_unlock(&array->aux->owner.lock);
-	return ret;
+	struct bpf_map *map = &array->map;
+	return __bpf_prog_map_compatible(map, fp);
 }
 
 static int bpf_check_tail_call(const struct bpf_prog *fp)
@@ -1897,7 +1952,7 @@ struct bpf_prog *bpf_prog_select_runtime(struct bpf_prog *fp, int *err)
 	/* In case of BPF to BPF calls, verifier did all the prep
 	 * work with regards to JITing, etc.
 	 */
-	bool jit_needed = false;
+	bool jit_needed = fp->jit_requested;
 
 	if (fp->bpf_func)
 		goto finalize;
@@ -1932,7 +1987,9 @@ struct bpf_prog *bpf_prog_select_runtime(struct bpf_prog *fp, int *err)
 	}
 
 finalize:
-	bpf_prog_lock_ro(fp);
+	*err = bpf_prog_lock_ro(fp);
+	if (*err)
+		return fp;
 
 	/* The tail call compatibility check can only be done at
 	 * this late stage as we need to determine, if we deal

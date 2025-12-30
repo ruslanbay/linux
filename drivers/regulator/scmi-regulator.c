@@ -257,7 +257,8 @@ static int process_scmi_regulator_of_node(struct scmi_device *sdev,
 					  struct device_node *np,
 					  struct scmi_regulator_info *rinfo)
 {
-	u32 dom, ret;
+	u32 dom;
+	int ret;
 
 	ret = of_property_read_u32(np, "reg", &dom);
 	if (ret)
@@ -352,7 +353,7 @@ static int scmi_regulator_probe(struct scmi_device *sdev)
 			return ret;
 		}
 	}
-
+	of_node_put(np);
 	/*
 	 * Register a regulator for each valid regulator-DT-entry that we
 	 * can successfully reach via SCMI and has a valid associated voltage

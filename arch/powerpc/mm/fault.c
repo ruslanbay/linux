@@ -412,10 +412,16 @@ static int ___do_page_fault(struct pt_regs *regs, unsigned long address,
 	/*
 	 * The kernel should never take an execute fault nor should it
 	 * take a page fault to a kernel address or a page fault to a user
-	 * address outside of dedicated places
+	 * address outside of dedicated places.
+	 *
+	 * Rather than kfence directly reporting false negatives, search whether
+	 * the NIP belongs to the fixup table for cases where fault could come
+	 * from functions like copy_from_kernel_nofault().
 	 */
 	if (unlikely(!is_user && bad_kernel_fault(regs, error_code, address, is_write))) {
-		if (kfence_handle_page_fault(address, is_write, regs))
+		if (is_kfence_address((void *)address) &&
+		    !search_exception_tables(instruction_pointer(regs)) &&
+		    kfence_handle_page_fault(address, is_write, regs))
 			return 0;
 
 		return SIGSEGV;
@@ -568,17 +574,23 @@ NOKPROBE_SYMBOL(hash__do_page_fault);
 static void __bad_page_fault(struct pt_regs *regs, int sig)
 {
 	int is_write = page_fault_is_write(regs->dsisr);
+	const char *msg;
 
 	/* kernel has accessed a bad area */
 
+	if (regs->dar < PAGE_SIZE)
+		msg = "Kernel NULL pointer dereference";
+	else
+		msg = "Unable to handle kernel data access";
+
 	switch (TRAP(regs)) {
 	case INTERRUPT_DATA_STORAGE:
-	case INTERRUPT_DATA_SEGMENT:
 	case INTERRUPT_H_DATA_STORAGE:
-		pr_alert("BUG: %s on %s at 0x%08lx\n",
-			 regs->dar < PAGE_SIZE ? "Kernel NULL pointer dereference" :
-			 "Unable to handle kernel data access",
+		pr_alert("BUG: %s on %s at 0x%08lx\n", msg,
 			 is_write ? "write" : "read", regs->dar);
+		break;
+	case INTERRUPT_DATA_SEGMENT:
+		pr_alert("BUG: %s at 0x%08lx\n", msg, regs->dar);
 		break;
 	case INTERRUPT_INST_STORAGE:
 	case INTERRUPT_INST_SEGMENT:

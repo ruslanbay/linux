@@ -419,7 +419,7 @@ struct netdata_local {
 /*
  * MAC support functions
  */
-static void __lpc_set_mac(struct netdata_local *pldat, u8 *mac)
+static void __lpc_set_mac(struct netdata_local *pldat, const u8 *mac)
 {
 	u32 tmp;
 
@@ -1349,7 +1349,7 @@ static int lpc_eth_drv_probe(struct platform_device *pdev)
 	__lpc_get_mac(pldat, ndev->dev_addr);
 
 	if (!is_valid_ether_addr(ndev->dev_addr)) {
-		of_get_mac_address(np, ndev->dev_addr);
+		of_get_ethdev_address(np, ndev);
 	}
 	if (!is_valid_ether_addr(ndev->dev_addr))
 		eth_hw_addr_random(ndev);
@@ -1469,6 +1469,7 @@ static int lpc_eth_drv_resume(struct platform_device *pdev)
 {
 	struct net_device *ndev = platform_get_drvdata(pdev);
 	struct netdata_local *pldat;
+	int ret;
 
 	if (device_may_wakeup(&pdev->dev))
 		disable_irq_wake(ndev->irq);
@@ -1478,7 +1479,9 @@ static int lpc_eth_drv_resume(struct platform_device *pdev)
 			pldat = netdev_priv(ndev);
 
 			/* Enable interface clock */
-			clk_enable(pldat->clk);
+			ret = clk_enable(pldat->clk);
+			if (ret)
+				return ret;
 
 			/* Reset and initialize */
 			__lpc_eth_reset(pldat);

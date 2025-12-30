@@ -172,6 +172,19 @@ struct stmmac_flow_entry {
 	int is_l4;
 };
 
+/* Rx Frame Steering */
+enum stmmac_rfs_type {
+	STMMAC_RFS_T_VLAN,
+	STMMAC_RFS_T_MAX,
+};
+
+struct stmmac_rfs_entry {
+	unsigned long cookie;
+	int in_use;
+	int type;
+	int tc;
+};
+
 struct stmmac_priv {
 	/* Frequently used values are kept adjacent for cache effect */
 	u32 tx_coal_frames[MTL_MAX_TX_QUEUES];
@@ -228,6 +241,7 @@ struct stmmac_priv {
 	u32 msg_enable;
 	int wolopts;
 	int wol_irq;
+	bool wol_irq_disabled;
 	int clk_csr;
 	struct timer_list eee_ctrl_timer;
 	int lpi_irq;
@@ -252,6 +266,7 @@ struct stmmac_priv {
 	spinlock_t ptp_lock;
 	/* Protects auxiliary snapshot registers from concurrent access. */
 	struct mutex aux_ts_lock;
+	wait_queue_head_t tstamp_busy_wait;
 
 	void __iomem *mmcaddr;
 	void __iomem *ptpaddr;
@@ -289,6 +304,10 @@ struct stmmac_priv {
 	struct stmmac_tc_entry *tc_entries;
 	unsigned int flow_entries_max;
 	struct stmmac_flow_entry *flow_entries;
+	unsigned int rfs_entries_max[STMMAC_RFS_T_MAX];
+	unsigned int rfs_entries_cnt[STMMAC_RFS_T_MAX];
+	unsigned int rfs_entries_total;
+	struct stmmac_rfs_entry *rfs_entries;
 
 	/* Pulse Per Second output */
 	struct stmmac_pps_cfg pps[STMMAC_PPS_MAX];
@@ -314,10 +333,11 @@ int stmmac_mdio_reset(struct mii_bus *mii);
 int stmmac_xpcs_setup(struct mii_bus *mii);
 void stmmac_set_ethtool_ops(struct net_device *netdev);
 
+int stmmac_init_tstamp_counter(struct stmmac_priv *priv, u32 systime_flags);
 void stmmac_ptp_register(struct stmmac_priv *priv);
 void stmmac_ptp_unregister(struct stmmac_priv *priv);
-int stmmac_open(struct net_device *dev);
-int stmmac_release(struct net_device *dev);
+int stmmac_xdp_open(struct net_device *dev);
+void stmmac_xdp_release(struct net_device *dev);
 int stmmac_resume(struct device *dev);
 int stmmac_suspend(struct device *dev);
 int stmmac_dvr_remove(struct device *dev);

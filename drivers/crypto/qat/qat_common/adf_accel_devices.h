@@ -24,7 +24,7 @@
 #define ADF_PCI_MAX_BARS 3
 #define ADF_DEVICE_NAME_LENGTH 32
 #define ADF_ETR_MAX_RINGS_PER_BANK 16
-#define ADF_MAX_MSIX_VECTOR_NAME 16
+#define ADF_MAX_MSIX_VECTOR_NAME 48
 #define ADF_DEVICE_NAME_PREFIX "qat_"
 
 enum adf_accel_capabilities {
@@ -166,6 +166,7 @@ struct adf_hw_device_data {
 	int (*init_arb)(struct adf_accel_dev *accel_dev);
 	void (*exit_arb)(struct adf_accel_dev *accel_dev);
 	const u32 *(*get_arb_mapping)(void);
+	int (*init_device)(struct adf_accel_dev *accel_dev);
 	void (*disable_iov)(struct adf_accel_dev *accel_dev);
 	void (*configure_iov_threads)(struct adf_accel_dev *accel_dev,
 				      bool enable);

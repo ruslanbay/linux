@@ -264,8 +264,8 @@ static void put_pasid_state(struct pasid_state *pasid_state)
 
 static void put_pasid_state_wait(struct pasid_state *pasid_state)
 {
-	refcount_dec(&pasid_state->count);
-	wait_event(pasid_state->wq, !refcount_read(&pasid_state->count));
+	if (!refcount_dec_and_test(&pasid_state->count))
+		wait_event(pasid_state->wq, !refcount_read(&pasid_state->count));
 	free_pasid_state(pasid_state);
 }
 
@@ -588,6 +588,7 @@ out_drop_state:
 	put_device_state(dev_state);
 
 out:
+	pci_dev_put(pdev);
 	return ret;
 }
 
@@ -928,10 +929,8 @@ static int __init amd_iommu_v2_init(void)
 {
 	int ret;
 
-	pr_info("AMD IOMMUv2 driver by Joerg Roedel <jroedel@suse.de>\n");
-
 	if (!amd_iommu_v2_supported()) {
-		pr_info("AMD IOMMUv2 functionality not available on this system\n");
+		pr_info("AMD IOMMUv2 functionality not available on this system - This is not a bug.\n");
 		/*
 		 * Load anyway to provide the symbols to other modules
 		 * which may use AMD IOMMUv2 optionally.
@@ -945,6 +944,8 @@ static int __init amd_iommu_v2_init(void)
 		goto out;
 
 	amd_iommu_register_ppr_notifier(&ppr_nb);
+
+	pr_info("AMD IOMMUv2 loaded and initialized\n");
 
 	return 0;
 

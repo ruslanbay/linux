@@ -34,7 +34,6 @@
 #include <drm/drm_auth.h>
 #include <drm/drm_device.h>
 #include <drm/drm_file.h>
-#include <drm/drm_hashtab.h>
 #include <drm/drm_rect.h>
 
 #include <drm/ttm/ttm_bo_driver.h>
@@ -43,6 +42,7 @@
 #include "ttm_object.h"
 
 #include "vmwgfx_fence.h"
+#include "vmwgfx_hashtab.h"
 #include "vmwgfx_reg.h"
 #include "vmwgfx_validation.h"
 
@@ -59,11 +59,8 @@
 #define VMWGFX_DRIVER_MINOR 19
 #define VMWGFX_DRIVER_PATCHLEVEL 0
 #define VMWGFX_FIFO_STATIC_SIZE (1024*1024)
-#define VMWGFX_MAX_RELOCATIONS 2048
-#define VMWGFX_MAX_VALIDATIONS 2048
-#define VMWGFX_MAX_DISPLAYS 16
+#define VMWGFX_NUM_DISPLAY_UNITS 8
 #define VMWGFX_CMD_BOUNCE_INIT_SIZE 32768
-#define VMWGFX_ENABLE_SCREEN_TARGET_OTABLE 1
 
 #define VMWGFX_PCI_ID_SVGA2              0x0405
 #define VMWGFX_PCI_ID_SVGA3              0x0406
@@ -74,7 +71,7 @@
 #define VMWGFX_NUM_GB_CONTEXT 256
 #define VMWGFX_NUM_GB_SHADER 20000
 #define VMWGFX_NUM_GB_SURFACE 32768
-#define VMWGFX_NUM_GB_SCREEN_TARGET VMWGFX_MAX_DISPLAYS
+#define VMWGFX_NUM_GB_SCREEN_TARGET VMWGFX_NUM_DISPLAY_UNITS
 #define VMWGFX_NUM_DXCONTEXT 256
 #define VMWGFX_NUM_DXQUERY 512
 #define VMWGFX_NUM_MOB (VMWGFX_NUM_GB_CONTEXT +\
@@ -82,8 +79,9 @@
 			VMWGFX_NUM_GB_SURFACE +\
 			VMWGFX_NUM_GB_SCREEN_TARGET)
 
-#define VMW_PL_GMR (TTM_PL_PRIV + 0)
-#define VMW_PL_MOB (TTM_PL_PRIV + 1)
+#define VMW_PL_GMR      (TTM_PL_PRIV + 0)
+#define VMW_PL_MOB      (TTM_PL_PRIV + 1)
+#define VMW_PL_SYSTEM   (TTM_PL_PRIV + 2)
 
 #define VMW_RES_CONTEXT ttm_driver_type0
 #define VMW_RES_SURFACE ttm_driver_type1
@@ -133,7 +131,7 @@ struct vmw_buffer_object {
  */
 struct vmw_validate_buffer {
 	struct ttm_validate_buffer base;
-	struct drm_hash_item hash;
+	struct vmwgfx_hash_item hash;
 	bool validate_as_mob;
 };
 
@@ -406,7 +404,7 @@ struct vmw_ctx_validation_info;
  * @ctx: The validation context
  */
 struct vmw_sw_context{
-	struct drm_open_hash res_ht;
+	struct vmwgfx_open_hash res_ht;
 	bool res_ht_initialized;
 	bool kernel;
 	struct vmw_fpriv *fp;
@@ -1039,7 +1037,6 @@ extern struct ttm_placement vmw_vram_placement;
 extern struct ttm_placement vmw_vram_sys_placement;
 extern struct ttm_placement vmw_vram_gmr_placement;
 extern struct ttm_placement vmw_sys_placement;
-extern struct ttm_placement vmw_evictable_placement;
 extern struct ttm_placement vmw_srf_placement;
 extern struct ttm_placement vmw_mob_placement;
 extern struct ttm_placement vmw_nonfixed_placement;
@@ -1115,15 +1112,14 @@ extern int vmw_execbuf_fence_commands(struct drm_file *file_priv,
 				      struct vmw_private *dev_priv,
 				      struct vmw_fence_obj **p_fence,
 				      uint32_t *p_handle);
-extern void vmw_execbuf_copy_fence_user(struct vmw_private *dev_priv,
+extern int vmw_execbuf_copy_fence_user(struct vmw_private *dev_priv,
 					struct vmw_fpriv *vmw_fp,
 					int ret,
 					struct drm_vmw_fence_rep __user
 					*user_fence_rep,
 					struct vmw_fence_obj *fence,
 					uint32_t fence_handle,
-					int32_t out_fence_fd,
-					struct sync_file *sync_file);
+					int32_t out_fence_fd);
 bool vmw_cmd_describe(const void *buf, u32 *size, char const **cmd);
 
 /**
@@ -1250,6 +1246,12 @@ int vmw_overlay_num_free_overlays(struct vmw_private *dev_priv);
 
 int vmw_gmrid_man_init(struct vmw_private *dev_priv, int type);
 void vmw_gmrid_man_fini(struct vmw_private *dev_priv, int type);
+
+/**
+ * System memory manager
+ */
+int vmw_sys_man_init(struct vmw_private *dev_priv);
+void vmw_sys_man_fini(struct vmw_private *dev_priv);
 
 /**
  * Prime - vmwgfx_prime.c
@@ -1550,16 +1552,7 @@ void vmw_bo_dirty_unmap(struct vmw_buffer_object *vbo,
 			pgoff_t start, pgoff_t end);
 vm_fault_t vmw_bo_vm_fault(struct vm_fault *vmf);
 vm_fault_t vmw_bo_vm_mkwrite(struct vm_fault *vmf);
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-vm_fault_t vmw_bo_vm_huge_fault(struct vm_fault *vmf,
-				enum page_entry_size pe_size);
-#endif
 
-/* Transparent hugepage support - vmwgfx_thp.c */
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-extern int vmw_thp_init(struct vmw_private *dev_priv);
-void vmw_thp_fini(struct vmw_private *dev_priv);
-#endif
 
 /**
  * VMW_DEBUG_KMS - Debug output for kernel mode-setting
@@ -1682,6 +1675,26 @@ static inline void vmw_irq_status_write(struct vmw_private *vmw,
 		vmw_write(vmw, SVGA_REG_IRQ_STATUS, status);
 	else
 		outl(status, vmw->io_start + SVGA_IRQSTATUS_PORT);
+}
+
+static inline bool vmw_has_fences(struct vmw_private *vmw)
+{
+	if ((vmw->capabilities & (SVGA_CAP_COMMAND_BUFFERS |
+				  SVGA_CAP_CMD_BUFFERS_2)) != 0)
+		return true;
+	return (vmw_fifo_caps(vmw) & SVGA_FIFO_CAP_FENCE) != 0;
+}
+
+static inline bool vmw_shadertype_is_valid(enum vmw_sm_type shader_model,
+					   u32 shader_type)
+{
+	SVGA3dShaderType max_allowed = SVGA3D_SHADERTYPE_PREDX_MAX;
+
+	if (shader_model >= VMW_SM_5)
+		max_allowed = SVGA3D_SHADERTYPE_MAX;
+	else if (shader_model >= VMW_SM_4)
+		max_allowed = SVGA3D_SHADERTYPE_DX10_MAX;
+	return shader_type >= SVGA3D_SHADERTYPE_MIN && shader_type < max_allowed;
 }
 
 #endif

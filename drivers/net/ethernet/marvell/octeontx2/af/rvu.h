@@ -23,6 +23,7 @@
 #define	PCI_DEVID_OCTEONTX2_LBK			0xA061
 
 /* Subsystem Device ID */
+#define PCI_SUBSYS_DEVID_98XX                  0xB100
 #define PCI_SUBSYS_DEVID_96XX                  0xB200
 #define PCI_SUBSYS_DEVID_CN10K_A	       0xB900
 
@@ -220,6 +221,7 @@ struct rvu_pfvf {
 	u16		maxlen;
 	u16		minlen;
 
+	bool		hw_rx_tstamp_en; /* Is rx_tstamp enabled */
 	u8		mac_addr[ETH_ALEN]; /* MAC address of this PF/VF */
 	u8		default_mac[ETH_ALEN]; /* MAC address from FWdata */
 
@@ -237,6 +239,7 @@ struct rvu_pfvf {
 	bool	cgx_in_use; /* this PF/VF using CGX? */
 	int	cgx_users;  /* number of cgx users - used only by PFs */
 
+	int     intf_mode;
 	u8	nix_blkaddr; /* BLKADDR_NIX0/1 assigned to this PF */
 	u8	nix_rx_intf; /* NIX0_RX/NIX1_RX interface to NPC */
 	u8	nix_tx_intf; /* NIX0_TX/NIX1_TX interface to NPC */
@@ -272,6 +275,21 @@ struct nix_mark_format {
 	u8 total;
 	u8 in_use;
 	u32 *cfg;
+};
+
+/* smq(flush) to tl1 cir/pir info */
+struct nix_smq_tree_ctx {
+	u16 schq;
+	u64 cir_off;
+	u64 cir_val;
+	u64 pir_off;
+	u64 pir_val;
+};
+
+/* smq flush context */
+struct nix_smq_flush_ctx {
+	int smq;
+	struct nix_smq_tree_ctx smq_tree_ctx[NIX_TXSCH_LVL_CNT];
 };
 
 struct npc_pkind {
@@ -612,6 +630,16 @@ static inline u16 rvu_nix_chan_cpt(struct rvu *rvu, u8 chan)
 	return rvu->hw->cpt_chan_base + chan;
 }
 
+static inline bool is_rvu_supports_nix1(struct rvu *rvu)
+{
+	struct pci_dev *pdev = rvu->pdev;
+
+	if (pdev->subsystem_device == PCI_SUBSYS_DEVID_98XX)
+		return true;
+
+	return false;
+}
+
 /* Function Prototypes
  * RVU
  */
@@ -794,11 +822,14 @@ void npc_enable_mcam_entry(struct rvu *rvu, struct npc_mcam *mcam,
 void npc_read_mcam_entry(struct rvu *rvu, struct npc_mcam *mcam,
 			 int blkaddr, u16 src, struct mcam_entry *entry,
 			 u8 *intf, u8 *ena);
+bool is_cgx_config_permitted(struct rvu *rvu, u16 pcifunc);
 bool is_mac_feature_supported(struct rvu *rvu, int pf, int feature);
 u32  rvu_cgx_get_fifolen(struct rvu *rvu);
 void *rvu_first_cgx_pdata(struct rvu *rvu);
 int cgxlmac_to_pf(struct rvu *rvu, int cgx_id, int lmac_id);
-
+int rvu_cgx_config_tx(void *cgxd, int lmac_id, bool enable);
+int rvu_cgx_tx_enable(struct rvu *rvu, u16 pcifunc, bool enable);
+u32 rvu_cgx_get_lmac_fifolen(struct rvu *rvu, int cgx, int lmac);
 int npc_get_nixlf_mcam_index(struct npc_mcam *mcam, u16 pcifunc, int nixlf,
 			     int type);
 bool is_mcam_entry_enabled(struct rvu *rvu, struct npc_mcam *mcam, int blkaddr,
@@ -806,6 +837,9 @@ bool is_mcam_entry_enabled(struct rvu *rvu, struct npc_mcam *mcam, int blkaddr,
 
 /* CPT APIs */
 int rvu_cpt_lf_teardown(struct rvu *rvu, u16 pcifunc, int lf, int slot);
+
+#define NDC_AF_BANK_MASK       GENMASK_ULL(7, 0)
+#define NDC_AF_BANK_LINE_MASK  GENMASK_ULL(31, 16)
 
 /* CN10K RVU */
 int rvu_set_channels_base(struct rvu *rvu);
@@ -822,9 +856,14 @@ static inline void rvu_dbg_init(struct rvu *rvu) {}
 static inline void rvu_dbg_exit(struct rvu *rvu) {}
 #endif
 
+int rvu_ndc_fix_locked_cacheline(struct rvu *rvu, int blkaddr);
+
 /* RVU Switch */
 void rvu_switch_enable(struct rvu *rvu);
 void rvu_switch_disable(struct rvu *rvu);
 void rvu_switch_update_rules(struct rvu *rvu, u16 pcifunc);
 
+int rvu_npc_set_parse_mode(struct rvu *rvu, u16 pcifunc, u64 mode, u8 dir,
+			   u64 pkind, u8 var_len_off, u8 var_len_off_mask,
+			   u8 shift_dir);
 #endif /* RVU_H */

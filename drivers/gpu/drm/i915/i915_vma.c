@@ -376,6 +376,7 @@ int i915_vma_bind(struct i915_vma *vma,
 	u32 bind_flags;
 	u32 vma_flags;
 
+	lockdep_assert_held(&vma->vm->mutex);
 	GEM_BUG_ON(!drm_mm_node_allocated(&vma->node));
 	GEM_BUG_ON(vma->size > vma->node.size);
 
@@ -433,6 +434,9 @@ int i915_vma_bind(struct i915_vma *vma,
 	} else {
 		vma->ops->bind_vma(vma->vm, NULL, vma, cache_level, bind_flags);
 	}
+
+	if (vma->obj)
+		set_bit(I915_BO_WAS_BOUND_BIT, &vma->obj->flags);
 
 	atomic_or(bind_flags, &vma->flags);
 	return 0;
@@ -1008,8 +1012,20 @@ err_active:
 err_unlock:
 	mutex_unlock(&vma->vm->mutex);
 err_fence:
-	if (work)
-		dma_fence_work_commit_imm(&work->base);
+	if (work) {
+		/*
+		 * When pinning VMA to GGTT on CHV or BXT with VTD enabled,
+		 * commit VMA binding asynchronously to avoid risk of lock
+		 * inversion among reservation_ww locks held here and
+		 * cpu_hotplug_lock acquired from stop_machine(), which we
+		 * wrap around GGTT updates when running in those environments.
+		 */
+		if (i915_vma_is_ggtt(vma) &&
+		    intel_vm_no_concurrent_access_wa(vma->vm->i915))
+			dma_fence_work_commit(&work->base);
+		else
+			dma_fence_work_commit_imm(&work->base);
+	}
 err_rpm:
 	if (wakeref)
 		intel_runtime_pm_put(&vma->vm->i915->runtime_pm, wakeref);

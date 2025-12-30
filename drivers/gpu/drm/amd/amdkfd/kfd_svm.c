@@ -347,14 +347,9 @@ static void svm_range_bo_release(struct kref *kref)
 		spin_lock(&svm_bo->list_lock);
 	}
 	spin_unlock(&svm_bo->list_lock);
-	if (!dma_fence_is_signaled(&svm_bo->eviction_fence->base)) {
-		/* We're not in the eviction worker.
-		 * Signal the fence and synchronize with any
-		 * pending eviction work.
-		 */
+	if (!dma_fence_is_signaled(&svm_bo->eviction_fence->base))
+		/* We're not in the eviction worker. Signal the fence. */
 		dma_fence_signal(&svm_bo->eviction_fence->base);
-		cancel_work_sync(&svm_bo->eviction_work);
-	}
 	dma_fence_put(&svm_bo->eviction_fence->base);
 	amdgpu_bo_unref(&svm_bo->bo);
 	kfree(svm_bo);
@@ -433,11 +428,11 @@ svm_range_validate_svm_bo(struct amdgpu_device *adev, struct svm_range *prange)
 
 	/* We need a new svm_bo. Spin-loop to wait for concurrent
 	 * svm_range_bo_release to finish removing this range from
-	 * its range list. After this, it is safe to reuse the
-	 * svm_bo pointer and svm_bo_list head.
+	 * its range list and set prange->svm_bo to null. After this,
+	 * it is safe to reuse the svm_bo pointer and svm_bo_list head.
 	 */
-	while (!list_empty_careful(&prange->svm_bo_list))
-		;
+	while (!list_empty_careful(&prange->svm_bo_list) || prange->svm_bo)
+		cond_resched();
 
 	return false;
 }
@@ -550,8 +545,15 @@ create_bo_failed:
 
 void svm_range_vram_node_free(struct svm_range *prange)
 {
-	svm_range_bo_unref(prange->svm_bo);
-	prange->ttm_res = NULL;
+	/* serialize prange->svm_bo unref */
+	mutex_lock(&prange->lock);
+	/* prange->svm_bo has not been unref */
+	if (prange->ttm_res) {
+		prange->ttm_res = NULL;
+		mutex_unlock(&prange->lock);
+		svm_range_bo_unref(prange->svm_bo);
+	} else
+		mutex_unlock(&prange->lock);
 }
 
 struct amdgpu_device *
@@ -691,7 +693,7 @@ svm_range_apply_attrs(struct kfd_process *p, struct svm_range *prange,
 			prange->flags &= ~attrs[i].value;
 			break;
 		case KFD_IOCTL_SVM_ATTR_GRANULARITY:
-			prange->granularity = attrs[i].value;
+			prange->granularity = min_t(uint32_t, attrs[i].value, 0x3F);
 			break;
 		default:
 			WARN_ONCE(1, "svm_range_check_attrs wasn't called?");
@@ -936,7 +938,7 @@ svm_range_split(struct svm_range *prange, uint64_t start, uint64_t last,
 }
 
 static int
-svm_range_split_tail(struct svm_range *prange, struct svm_range *new,
+svm_range_split_tail(struct svm_range *prange,
 		     uint64_t new_last, struct list_head *insert_list)
 {
 	struct svm_range *tail;
@@ -948,7 +950,7 @@ svm_range_split_tail(struct svm_range *prange, struct svm_range *new,
 }
 
 static int
-svm_range_split_head(struct svm_range *prange, struct svm_range *new,
+svm_range_split_head(struct svm_range *prange,
 		     uint64_t new_start, struct list_head *insert_list)
 {
 	struct svm_range *head;
@@ -1307,7 +1309,7 @@ struct svm_validate_context {
 	struct svm_range *prange;
 	bool intr;
 	unsigned long bitmap[MAX_GPU_INSTANCE];
-	struct ttm_validate_buffer tv[MAX_GPU_INSTANCE+1];
+	struct ttm_validate_buffer tv[MAX_GPU_INSTANCE];
 	struct list_head validate_list;
 	struct ww_acquire_ctx ticket;
 };
@@ -1333,11 +1335,6 @@ static int svm_range_reserve_bos(struct svm_validate_context *ctx)
 		ctx->tv[gpuidx].bo = &vm->root.bo->tbo;
 		ctx->tv[gpuidx].num_shared = 4;
 		list_add(&ctx->tv[gpuidx].head, &ctx->validate_list);
-	}
-	if (ctx->prange->svm_bo && ctx->prange->ttm_res) {
-		ctx->tv[MAX_GPU_INSTANCE].bo = &ctx->prange->svm_bo->bo->tbo;
-		ctx->tv[MAX_GPU_INSTANCE].num_shared = 1;
-		list_add(&ctx->tv[MAX_GPU_INSTANCE].head, &ctx->validate_list);
 	}
 
 	r = ttm_eu_reserve_buffers(&ctx->ticket, &ctx->validate_list,
@@ -1494,9 +1491,11 @@ static int svm_range_validate_and_map(struct mm_struct *mm,
 
 		next = min(vma->vm_end, end);
 		npages = (next - addr) >> PAGE_SHIFT;
+		WRITE_ONCE(p->svms.faulting_task, current);
 		r = amdgpu_hmm_range_get_pages(&prange->notifier, mm, NULL,
 					       addr, npages, &hmm_range,
 					       readonly, true, owner);
+		WRITE_ONCE(p->svms.faulting_task, NULL);
 		if (r) {
 			pr_debug("failed %d to get svm range pages\n", r);
 			goto unreserve_out;
@@ -1570,7 +1569,6 @@ retry_flush_work:
 static void svm_range_restore_work(struct work_struct *work)
 {
 	struct delayed_work *dwork = to_delayed_work(work);
-	struct amdkfd_process_info *process_info;
 	struct svm_range_list *svms;
 	struct svm_range *prange;
 	struct kfd_process *p;
@@ -1590,12 +1588,10 @@ static void svm_range_restore_work(struct work_struct *work)
 	 * the lifetime of this thread, kfd_process and mm will be valid.
 	 */
 	p = container_of(svms, struct kfd_process, svms);
-	process_info = p->kgd_process_info;
 	mm = p->mm;
 	if (!mm)
 		return;
 
-	mutex_lock(&process_info->lock);
 	svm_range_list_lock_and_flush_work(svms, mm);
 	mutex_lock(&svms->lock);
 
@@ -1648,7 +1644,6 @@ static void svm_range_restore_work(struct work_struct *work)
 out_reschedule:
 	mutex_unlock(&svms->lock);
 	mmap_write_unlock(mm);
-	mutex_unlock(&process_info->lock);
 
 	/* If validation failed, reschedule another attempt */
 	if (evicted_ranges) {
@@ -1764,49 +1759,54 @@ static struct svm_range *svm_range_clone(struct svm_range *old)
 }
 
 /**
- * svm_range_handle_overlap - split overlap ranges
- * @svms: svm range list header
- * @new: range added with this attributes
- * @start: range added start address, in pages
- * @last: range last address, in pages
- * @update_list: output, the ranges attributes are updated. For set_attr, this
- *               will do validation and map to GPUs. For unmap, this will be
- *               removed and unmap from GPUs
- * @insert_list: output, the ranges will be inserted into svms, attributes are
- *               not changes. For set_attr, this will add into svms.
- * @remove_list:output, the ranges will be removed from svms
- * @left: the remaining range after overlap, For set_attr, this will be added
- *        as new range.
+ * svm_range_add - add svm range and handle overlap
+ * @p: the range add to this process svms
+ * @start: page size aligned
+ * @size: page size aligned
+ * @nattr: number of attributes
+ * @attrs: array of attributes
+ * @update_list: output, the ranges need validate and update GPU mapping
+ * @insert_list: output, the ranges need insert to svms
+ * @remove_list: output, the ranges are replaced and need remove from svms
  *
- * Total have 5 overlap cases.
+ * Check if the virtual address range has overlap with any existing ranges,
+ * split partly overlapping ranges and add new ranges in the gaps. All changes
+ * should be applied to the range_list and interval tree transactionally. If
+ * any range split or allocation fails, the entire update fails. Therefore any
+ * existing overlapping svm_ranges are cloned and the original svm_ranges left
+ * unchanged.
  *
- * This function handles overlap of an address interval with existing
- * struct svm_ranges for applying new attributes. This may require
- * splitting existing struct svm_ranges. All changes should be applied to
- * the range_list and interval tree transactionally. If any split operation
- * fails, the entire update fails. Therefore the existing overlapping
- * svm_ranges are cloned and the original svm_ranges left unchanged. If the
- * transaction succeeds, the modified clones are added and the originals
- * freed. Otherwise the clones are removed and the old svm_ranges remain.
+ * If the transaction succeeds, the caller can update and insert clones and
+ * new ranges, then free the originals.
  *
- * Context: The caller must hold svms->lock
+ * Otherwise the caller can free the clones and new ranges, while the old
+ * svm_ranges remain unchanged.
+ *
+ * Context: Process context, caller must hold svms->lock
+ *
+ * Return:
+ * 0 - OK, otherwise error code
  */
 static int
-svm_range_handle_overlap(struct svm_range_list *svms, struct svm_range *new,
-			 unsigned long start, unsigned long last,
-			 struct list_head *update_list,
-			 struct list_head *insert_list,
-			 struct list_head *remove_list,
-			 unsigned long *left)
+svm_range_add(struct kfd_process *p, uint64_t start, uint64_t size,
+	      uint32_t nattr, struct kfd_ioctl_svm_attribute *attrs,
+	      struct list_head *update_list, struct list_head *insert_list,
+	      struct list_head *remove_list)
 {
+	unsigned long last = start + size - 1UL;
+	struct svm_range_list *svms = &p->svms;
 	struct interval_tree_node *node;
+	struct svm_range new = {0};
 	struct svm_range *prange;
 	struct svm_range *tmp;
 	int r = 0;
 
+	pr_debug("svms 0x%p [0x%llx 0x%lx]\n", &p->svms, start, last);
+
 	INIT_LIST_HEAD(update_list);
 	INIT_LIST_HEAD(insert_list);
 	INIT_LIST_HEAD(remove_list);
+	svm_range_apply_attrs(p, &new, nattr, attrs);
 
 	node = interval_tree_iter_first(&svms->objects, start, last);
 	while (node) {
@@ -1834,14 +1834,14 @@ svm_range_handle_overlap(struct svm_range_list *svms, struct svm_range *new,
 
 			if (node->start < start) {
 				pr_debug("change old range start\n");
-				r = svm_range_split_head(prange, new, start,
+				r = svm_range_split_head(prange, start,
 							 insert_list);
 				if (r)
 					goto out;
 			}
 			if (node->last > last) {
 				pr_debug("change old range last\n");
-				r = svm_range_split_tail(prange, new, last,
+				r = svm_range_split_tail(prange, last,
 							 insert_list);
 				if (r)
 					goto out;
@@ -1853,7 +1853,7 @@ svm_range_handle_overlap(struct svm_range_list *svms, struct svm_range *new,
 			prange = old;
 		}
 
-		if (!svm_range_is_same_attrs(prange, new))
+		if (!svm_range_is_same_attrs(prange, &new))
 			list_add(&prange->update_list, update_list);
 
 		/* insert a new node if needed */
@@ -1873,8 +1873,16 @@ svm_range_handle_overlap(struct svm_range_list *svms, struct svm_range *new,
 		start = next_start;
 	}
 
-	if (left && start <= last)
-		*left = last - start + 1;
+	/* add a final range at the end if needed */
+	if (start <= last) {
+		prange = svm_range_new(svms, start, last);
+		if (!prange) {
+			r = -ENOMEM;
+			goto out;
+		}
+		list_add(&prange->insert_list, insert_list);
+		list_add(&prange->update_list, update_list);
+	}
 
 out:
 	if (r)
@@ -2177,6 +2185,8 @@ svm_range_cpu_invalidate_pagetables(struct mmu_interval_notifier *mni,
 
 	if (range->event == MMU_NOTIFY_RELEASE)
 		return true;
+	if (!mmget_not_zero(mni->mm))
+		return true;
 
 	start = mni->interval_tree.start;
 	last = mni->interval_tree.last;
@@ -2203,6 +2213,7 @@ svm_range_cpu_invalidate_pagetables(struct mmu_interval_notifier *mni,
 	}
 
 	svm_range_unlock(prange);
+	mmput(mni->mm);
 
 	return true;
 }
@@ -2314,6 +2325,7 @@ svm_range_get_range_boundaries(struct kfd_process *p, int64_t addr,
 {
 	struct vm_area_struct *vma;
 	struct interval_tree_node *node;
+	struct rb_node *rb_node;
 	unsigned long start_limit, end_limit;
 
 	vma = find_vma(p->mm, addr << PAGE_SHIFT);
@@ -2330,16 +2342,15 @@ svm_range_get_range_boundaries(struct kfd_process *p, int64_t addr,
 	if (node) {
 		end_limit = min(end_limit, node->start);
 		/* Last range that ends before the fault address */
-		node = container_of(rb_prev(&node->rb),
-				    struct interval_tree_node, rb);
+		rb_node = rb_prev(&node->rb);
 	} else {
 		/* Last range must end before addr because
 		 * there was no range after addr
 		 */
-		node = container_of(rb_last(&p->svms.objects.rb_root),
-				    struct interval_tree_node, rb);
+		rb_node = rb_last(&p->svms.objects.rb_root);
 	}
-	if (node) {
+	if (rb_node) {
+		node = container_of(rb_node, struct interval_tree_node, rb);
 		if (node->last >= addr) {
 			WARN(1, "Overlap with prev node and page fault addr\n");
 			return -EFAULT;
@@ -2703,59 +2714,6 @@ svm_range_is_valid(struct mm_struct *mm, uint64_t start, uint64_t size)
 }
 
 /**
- * svm_range_add - add svm range and handle overlap
- * @p: the range add to this process svms
- * @start: page size aligned
- * @size: page size aligned
- * @nattr: number of attributes
- * @attrs: array of attributes
- * @update_list: output, the ranges need validate and update GPU mapping
- * @insert_list: output, the ranges need insert to svms
- * @remove_list: output, the ranges are replaced and need remove from svms
- *
- * Check if the virtual address range has overlap with the registered ranges,
- * split the overlapped range, copy and adjust pages address and vram nodes in
- * old and new ranges.
- *
- * Context: Process context, caller must hold svms->lock
- *
- * Return:
- * 0 - OK, otherwise error code
- */
-static int
-svm_range_add(struct kfd_process *p, uint64_t start, uint64_t size,
-	      uint32_t nattr, struct kfd_ioctl_svm_attribute *attrs,
-	      struct list_head *update_list, struct list_head *insert_list,
-	      struct list_head *remove_list)
-{
-	uint64_t last = start + size - 1UL;
-	struct svm_range_list *svms;
-	struct svm_range new = {0};
-	struct svm_range *prange;
-	unsigned long left = 0;
-	int r = 0;
-
-	pr_debug("svms 0x%p [0x%llx 0x%llx]\n", &p->svms, start, last);
-
-	svm_range_apply_attrs(p, &new, nattr, attrs);
-
-	svms = &p->svms;
-
-	r = svm_range_handle_overlap(svms, &new, start, last, update_list,
-				     insert_list, remove_list, &left);
-	if (r)
-		return r;
-
-	if (left) {
-		prange = svm_range_new(svms, last - left + 1, last);
-		list_add(&prange->insert_list, insert_list);
-		list_add(&prange->update_list, update_list);
-	}
-
-	return 0;
-}
-
-/**
  * svm_range_best_prefetch_location - decide the best prefetch location
  * @prange: svm range structure
  *
@@ -2909,13 +2867,14 @@ svm_range_trigger_migration(struct mm_struct *mm, struct svm_range *prange,
 
 int svm_range_schedule_evict_svm_bo(struct amdgpu_amdkfd_fence *fence)
 {
-	if (!fence)
-		return -EINVAL;
-
-	if (dma_fence_is_signaled(&fence->base))
-		return 0;
-
-	if (fence->svm_bo) {
+	/* Dereferencing fence->svm_bo is safe here because the fence hasn't
+	 * signaled yet and we're under the protection of the fence->lock.
+	 * After the fence is signaled in svm_range_bo_release, we cannot get
+	 * here any more.
+	 *
+	 * Reference is dropped in svm_range_evict_svm_bo_worker.
+	 */
+	if (svm_bo_ref_unless_zero(fence->svm_bo)) {
 		WRITE_ONCE(fence->svm_bo->evicting, 1);
 		schedule_work(&fence->svm_bo->eviction_work);
 	}
@@ -2930,8 +2889,6 @@ static void svm_range_evict_svm_bo_worker(struct work_struct *work)
 	struct mm_struct *mm;
 
 	svm_bo = container_of(work, struct svm_range_bo, eviction_work);
-	if (!svm_bo_ref_unless_zero(svm_bo))
-		return; /* svm_bo was freed while eviction was pending */
 
 	/* svm_range_bo_release destroys this worker thread. So during
 	 * the lifetime of this thread, kfd_process and mm will be valid.
@@ -2979,7 +2936,6 @@ static int
 svm_range_set_attr(struct kfd_process *p, uint64_t start, uint64_t size,
 		   uint32_t nattr, struct kfd_ioctl_svm_attribute *attrs)
 {
-	struct amdkfd_process_info *process_info = p->kgd_process_info;
 	struct mm_struct *mm = current->mm;
 	struct list_head update_list;
 	struct list_head insert_list;
@@ -2997,8 +2953,6 @@ svm_range_set_attr(struct kfd_process *p, uint64_t start, uint64_t size,
 		return r;
 
 	svms = &p->svms;
-
-	mutex_lock(&process_info->lock);
 
 	svm_range_list_lock_and_flush_work(svms, mm);
 
@@ -3075,8 +3029,6 @@ out_unlock_range:
 	mutex_unlock(&svms->lock);
 	mmap_read_unlock(mm);
 out:
-	mutex_unlock(&process_info->lock);
-
 	pr_debug("pasid 0x%x svms 0x%p [0x%llx 0x%llx] done, r=%d\n", p->pasid,
 		 &p->svms, start, start + size - 1, r);
 
@@ -3276,7 +3228,7 @@ svm_ioctl(struct kfd_process *p, enum kfd_ioctl_svm_op op, uint64_t start,
 		r = svm_range_get_attr(p, start, size, nattrs, attrs);
 		break;
 	default:
-		r = EINVAL;
+		r = -EINVAL;
 		break;
 	}
 

@@ -190,8 +190,10 @@ static int v9fs_parse_options(struct v9fs_session_info *v9ses, char *opts)
 
 	while ((p = strsep(&options, ",")) != NULL) {
 		int token, r;
+
 		if (!*p)
 			continue;
+
 		token = match_token(p, tokens, args);
 		switch (token) {
 		case Opt_debug:
@@ -556,7 +558,7 @@ static ssize_t caches_show(struct kobject *kobj,
 	spin_lock(&v9fs_sessionlist_lock);
 	list_for_each_entry(v9ses, &v9fs_sessionlist, slist) {
 		if (v9ses->cachetag) {
-			n = snprintf(buf, limit, "%s\n", v9ses->cachetag);
+			n = snprintf(buf + count, limit, "%s\n", v9ses->cachetag);
 			if (n < 0) {
 				count = n;
 				break;
@@ -592,13 +594,16 @@ static const struct attribute_group v9fs_attr_group = {
 
 static int __init v9fs_sysfs_init(void)
 {
+	int ret;
+
 	v9fs_kobj = kobject_create_and_add("9p", fs_kobj);
 	if (!v9fs_kobj)
 		return -ENOMEM;
 
-	if (sysfs_create_group(v9fs_kobj, &v9fs_attr_group)) {
+	ret = sysfs_create_group(v9fs_kobj, &v9fs_attr_group);
+	if (ret) {
 		kobject_put(v9fs_kobj);
-		return -ENOMEM;
+		return ret;
 	}
 
 	return 0;
@@ -659,6 +664,7 @@ static void v9fs_destroy_inode_cache(void)
 static int v9fs_cache_register(void)
 {
 	int ret;
+
 	ret = v9fs_init_inode_cache();
 	if (ret < 0)
 		return ret;
@@ -686,6 +692,7 @@ static void v9fs_cache_unregister(void)
 static int __init init_v9fs(void)
 {
 	int err;
+
 	pr_info("Installing v9fs 9p2000 file system support\n");
 	/* TODO: Setup list of registered trasnport modules */
 

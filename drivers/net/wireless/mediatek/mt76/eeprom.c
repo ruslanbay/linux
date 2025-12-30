@@ -51,7 +51,7 @@ int mt76_get_of_eeprom(struct mt76_dev *dev, void *eep, int offset, int len)
 		goto out_put_node;
 	}
 
-	offset = be32_to_cpup(list);
+	offset += be32_to_cpup(list);
 	ret = mtd_read(mtd, offset, len, &retlen, eep);
 	put_mtd_device(mtd);
 	if (ret)
@@ -74,6 +74,10 @@ int mt76_get_of_eeprom(struct mt76_dev *dev, void *eep, int offset, int len)
 
 #ifdef CONFIG_NL80211_TESTMODE
 	dev->test_mtd.name = devm_kstrdup(dev->dev, part, GFP_KERNEL);
+	if (!dev->test_mtd.name) {
+		ret = -ENOMEM;
+		goto out_put_node;
+	}
 	dev->test_mtd.offset = offset;
 #endif
 
@@ -146,10 +150,13 @@ mt76_find_power_limits_node(struct mt76_dev *dev)
 		}
 
 		if (mt76_string_prop_find(country, dev->alpha2) ||
-		    mt76_string_prop_find(regd, region_name))
+		    mt76_string_prop_find(regd, region_name)) {
+			of_node_put(np);
 			return cur;
+		}
 	}
 
+	of_node_put(np);
 	return fallback;
 }
 

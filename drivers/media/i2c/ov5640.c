@@ -1406,6 +1406,7 @@ static int ov5640_get_light_freq(struct ov5640_dev *sensor)
 			light_freq = 50;
 		} else {
 			/* 60Hz */
+			light_freq = 60;
 		}
 	}
 
@@ -1968,9 +1969,9 @@ static int ov5640_set_power_mipi(struct ov5640_dev *sensor, bool on)
 	 *		  "ov5640_set_stream_mipi()")
 	 * [4] = 0	: Power up MIPI HS Tx
 	 * [3] = 0	: Power up MIPI LS Rx
-	 * [2] = 0	: MIPI interface disabled
+	 * [2] = 1	: MIPI interface enabled
 	 */
-	ret = ov5640_write_reg(sensor, OV5640_REG_IO_MIPI_CTRL00, 0x40);
+	ret = ov5640_write_reg(sensor, OV5640_REG_IO_MIPI_CTRL00, 0x44);
 	if (ret)
 		return ret;
 
@@ -2293,7 +2294,6 @@ static int ov5640_set_fmt(struct v4l2_subdev *sd,
 	struct ov5640_dev *sensor = to_ov5640_dev(sd);
 	const struct ov5640_mode_info *new_mode;
 	struct v4l2_mbus_framefmt *mbus_fmt = &format->format;
-	struct v4l2_mbus_framefmt *fmt;
 	int ret;
 
 	if (format->pad != 0)
@@ -2311,12 +2311,10 @@ static int ov5640_set_fmt(struct v4l2_subdev *sd,
 	if (ret)
 		goto out;
 
-	if (format->which == V4L2_SUBDEV_FORMAT_TRY)
-		fmt = v4l2_subdev_get_try_format(sd, sd_state, 0);
-	else
-		fmt = &sensor->fmt;
-
-	*fmt = *mbus_fmt;
+	if (format->which == V4L2_SUBDEV_FORMAT_TRY) {
+		*v4l2_subdev_get_try_format(sd, sd_state, 0) = *mbus_fmt;
+		goto out;
+	}
 
 	if (new_mode != sensor->current_mode) {
 		sensor->current_mode = new_mode;
@@ -2324,6 +2322,9 @@ static int ov5640_set_fmt(struct v4l2_subdev *sd,
 	}
 	if (mbus_fmt->code != sensor->fmt.code)
 		sensor->pending_fmt_change = true;
+
+	/* update format even if code is unchanged, resolution might change */
+	sensor->fmt = *mbus_fmt;
 
 	__v4l2_ctrl_s_ctrl_int64(sensor->ctrls.pixel_rate,
 				 ov5640_calc_pixel_rate(sensor));
@@ -2776,7 +2777,7 @@ static int ov5640_init_controls(struct ov5640_dev *sensor)
 	/* Auto/manual gain */
 	ctrls->auto_gain = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_AUTOGAIN,
 					     0, 1, 1, 1);
-	ctrls->gain = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_GAIN,
+	ctrls->gain = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_ANALOGUE_GAIN,
 					0, 1023, 1, 0);
 
 	ctrls->saturation = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_SATURATION,

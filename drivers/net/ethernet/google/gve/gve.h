@@ -30,7 +30,7 @@
 #define GVE_MIN_MSIX 3
 
 /* Numbers of gve tx/rx stats in stats report. */
-#define GVE_TX_STATS_REPORT_NUM	5
+#define GVE_TX_STATS_REPORT_NUM	6
 #define GVE_RX_STATS_REPORT_NUM	2
 
 /* Interval to schedule a stats report update, 20000ms. */
@@ -46,6 +46,8 @@
 #define GVE_NUM_PTYPES	1024
 
 #define GVE_RX_BUFFER_SIZE_DQO 2048
+
+#define GVE_GQ_TX_MIN_PKT_DESC_BYTES 182
 
 /* Each slot in the desc ring has a 1:1 mapping to a slot in the data ring */
 struct gve_rx_desc_queue {
@@ -142,6 +144,15 @@ struct gve_index_list {
 	s16 tail;
 };
 
+/* A single received packet split across multiple buffers may be
+ * reconstructed using the information in this structure.
+ */
+struct gve_rx_ctx {
+	/* head and tail of skb chain for the current packet or NULL if none */
+	struct sk_buff *skb_head;
+	struct sk_buff *skb_tail;
+};
+
 /* Contains datapath state used to represent an RX queue. */
 struct gve_rx_ring {
 	struct gve_priv *gve;
@@ -206,9 +217,7 @@ struct gve_rx_ring {
 	dma_addr_t q_resources_bus; /* dma address for the queue resources */
 	struct u64_stats_sync statss; /* sync stats for 32bit archs */
 
-	/* head and tail of skb chain for the current packet or NULL if none */
-	struct sk_buff *skb_head;
-	struct sk_buff *skb_tail;
+	struct gve_rx_ctx ctx; /* Info for packet currently being processed in this ring. */
 };
 
 /* A TX desc ring entry */
@@ -224,11 +233,6 @@ struct gve_tx_iovec {
 	u32 iov_padding; /* padding associated with this segment */
 };
 
-struct gve_tx_dma_buf {
-	DEFINE_DMA_UNMAP_ADDR(dma);
-	DEFINE_DMA_UNMAP_LEN(len);
-};
-
 /* Tracks the memory in the fifo occupied by the skb. Mapped 1:1 to a desc
  * ring entry but only used for a pkt_desc not a seg_desc
  */
@@ -236,7 +240,10 @@ struct gve_tx_buffer_state {
 	struct sk_buff *skb; /* skb for this pkt */
 	union {
 		struct gve_tx_iovec iov[GVE_TX_MAX_IOVEC]; /* segments of this pkt */
-		struct gve_tx_dma_buf buf;
+		struct {
+			DEFINE_DMA_UNMAP_ADDR(dma);
+			DEFINE_DMA_UNMAP_LEN(len);
+		};
 	};
 };
 
@@ -280,7 +287,8 @@ struct gve_tx_pending_packet_dqo {
 	 * All others correspond to `skb`'s frags and should be unmapped with
 	 * `dma_unmap_page`.
 	 */
-	struct gve_tx_dma_buf bufs[MAX_SKB_FRAGS + 1];
+	DEFINE_DMA_UNMAP_ADDR(dma[MAX_SKB_FRAGS + 1]);
+	DEFINE_DMA_UNMAP_LEN(len[MAX_SKB_FRAGS + 1]);
 	u16 num_bufs;
 
 	/* Linked list index to next element in the list, or -1 if none */
@@ -414,7 +422,9 @@ struct gve_tx_ring {
 	u32 q_num ____cacheline_aligned; /* queue idx */
 	u32 stop_queue; /* count of queue stops */
 	u32 wake_queue; /* count of queue wakes */
+	u32 queue_timeout; /* count of queue timeouts */
 	u32 ntfy_id; /* notification block index */
+	u32 last_kick_msec; /* Last time the queue was kicked */
 	dma_addr_t bus; /* dma address of the descr ring */
 	dma_addr_t q_resources_bus; /* dma address of the queue resources */
 	dma_addr_t complq_bus_dqo; /* dma address of the dqo.compl_ring */
@@ -814,7 +824,7 @@ static inline bool gve_is_gqi(struct gve_priv *priv)
 /* buffers */
 int gve_alloc_page(struct gve_priv *priv, struct device *dev,
 		   struct page **page, dma_addr_t *dma,
-		   enum dma_data_direction);
+		   enum dma_data_direction, gfp_t gfp_flags);
 void gve_free_page(struct device *dev, struct page *page, dma_addr_t dma,
 		   enum dma_data_direction);
 /* tx handling */

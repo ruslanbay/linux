@@ -345,8 +345,7 @@ static SUNXI_CCU_GATE(dram_ohci_clk,	"dram-ohci",	"dram",
 
 static const char * const de_parents[] = { "pll-video", "pll-periph0" };
 static SUNXI_CCU_M_WITH_MUX_GATE(de_clk, "de", de_parents,
-				 0x104, 0, 4, 24, 2, BIT(31),
-				 CLK_SET_RATE_PARENT);
+				 0x104, 0, 4, 24, 3, BIT(31), 0);
 
 static const char * const tcon_parents[] = { "pll-video" };
 static SUNXI_CCU_M_WITH_MUX_GATE(tcon_clk, "tcon", tcon_parents,
@@ -822,7 +821,7 @@ static void __init sun8i_v3_v3s_ccu_init(struct device_node *node,
 	val &= ~GENMASK(19, 16);
 	writel(val, reg + SUN8I_V3S_PLL_AUDIO_REG);
 
-	sunxi_ccu_probe(node, reg, ccu_desc);
+	of_sunxi_ccu_probe(node, reg, ccu_desc);
 }
 
 static void __init sun8i_v3s_ccu_setup(struct device_node *node)

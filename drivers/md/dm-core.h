@@ -21,6 +21,8 @@
 #include "dm-ima.h"
 
 #define DM_RESERVED_MAX_IOS		1024
+#define DM_MAX_TARGETS			1048576
+#define DM_MAX_TARGET_PARAMS		1024
 
 struct dm_kobject_holder {
 	struct kobject kobj;
@@ -64,6 +66,8 @@ struct mapped_device {
 	char name[16];
 	struct gendisk *disk;
 	struct dax_device *dax_dev;
+
+	unsigned long __percpu *pending_io;
 
 	/*
 	 * A list of ios that arrived while we were suspended.

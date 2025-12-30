@@ -3530,6 +3530,9 @@ complete_cmd_fusion(struct megasas_instance *instance, u32 MSIxIndex,
 	if (atomic_read(&instance->adprecovery) == MEGASAS_HW_CRITICAL_ERROR)
 		return IRQ_HANDLED;
 
+	if (irq_context && !atomic_add_unless(&irq_context->in_used, 1, 1))
+		return 0;
+
 	desc = fusion->reply_frames_desc[MSIxIndex] +
 				fusion->last_reply_idx[MSIxIndex];
 
@@ -3540,11 +3543,11 @@ complete_cmd_fusion(struct megasas_instance *instance, u32 MSIxIndex,
 	reply_descript_type = reply_desc->ReplyFlags &
 		MPI2_RPY_DESCRIPT_FLAGS_TYPE_MASK;
 
-	if (reply_descript_type == MPI2_RPY_DESCRIPT_FLAGS_UNUSED)
+	if (reply_descript_type == MPI2_RPY_DESCRIPT_FLAGS_UNUSED) {
+		if (irq_context)
+			atomic_dec(&irq_context->in_used);
 		return IRQ_NONE;
-
-	if (irq_context && !atomic_add_unless(&irq_context->in_used, 1, 1))
-		return 0;
+	}
 
 	num_completed = 0;
 
@@ -4734,7 +4737,7 @@ int megasas_task_abort_fusion(struct scsi_cmnd *scmd)
 	devhandle = megasas_get_tm_devhandle(scmd->device);
 
 	if (devhandle == (u16)ULONG_MAX) {
-		ret = SUCCESS;
+		ret = FAILED;
 		sdev_printk(KERN_INFO, scmd->device,
 			"task abort issued for invalid devhandle\n");
 		mutex_unlock(&instance->reset_mutex);
@@ -4804,7 +4807,7 @@ int megasas_reset_target_fusion(struct scsi_cmnd *scmd)
 	devhandle = megasas_get_tm_devhandle(scmd->device);
 
 	if (devhandle == (u16)ULONG_MAX) {
-		ret = SUCCESS;
+		ret = FAILED;
 		sdev_printk(KERN_INFO, scmd->device,
 			"target reset issued for invalid devhandle\n");
 		mutex_unlock(&instance->reset_mutex);
@@ -5276,7 +5279,6 @@ megasas_alloc_fusion_context(struct megasas_instance *instance)
 		if (!fusion->log_to_span) {
 			dev_err(&instance->pdev->dev, "Failed from %s %d\n",
 				__func__, __LINE__);
-			kfree(instance->ctrl_context);
 			return -ENOMEM;
 		}
 	}

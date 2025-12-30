@@ -189,14 +189,16 @@ struct fib6_info {
 	u32				fib6_metric;
 	u8				fib6_protocol;
 	u8				fib6_type;
+
+	u8				offload;
+	u8				trap;
+	u8				offload_failed;
+
 	u8				should_flush:1,
 					dst_nocount:1,
 					dst_nopolicy:1,
 					fib6_destroying:1,
-					offload:1,
-					trap:1,
-					offload_failed:1,
-					unused:1;
+					unused:4;
 
 	struct rcu_head			rcu;
 	struct nexthop			*nh;
@@ -281,7 +283,7 @@ static inline bool fib6_get_cookie_safe(const struct fib6_info *f6i,
 	fn = rcu_dereference(f6i->fib6_node);
 
 	if (fn) {
-		*cookie = fn->fn_sernum;
+		*cookie = READ_ONCE(fn->fn_sernum);
 		/* pairs with smp_wmb() in __fib6_update_sernum_upto_root() */
 		smp_rmb();
 		status = true;
@@ -485,6 +487,7 @@ int fib6_nh_init(struct net *net, struct fib6_nh *fib6_nh,
 		 struct fib6_config *cfg, gfp_t gfp_flags,
 		 struct netlink_ext_ack *extack);
 void fib6_nh_release(struct fib6_nh *fib6_nh);
+void fib6_nh_release_dsts(struct fib6_nh *fib6_nh);
 
 int call_fib6_entry_notifiers(struct net *net,
 			      enum fib_event_type event_type,
@@ -607,7 +610,10 @@ static inline bool fib6_rules_early_flow_dissect(struct net *net,
 	if (!net->ipv6.fib6_rules_require_fldissect)
 		return false;
 
-	skb_flow_dissect_flow_keys(skb, flkeys, flag);
+	memset(flkeys, 0, sizeof(*flkeys));
+	__skb_flow_dissect(net, skb, &flow_keys_dissector,
+			   flkeys, NULL, 0, 0, 0, flag);
+
 	fl6->fl6_sport = flkeys->ports.src;
 	fl6->fl6_dport = flkeys->ports.dst;
 	fl6->flowi6_proto = flkeys->basic.ip_proto;

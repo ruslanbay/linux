@@ -77,6 +77,9 @@ SYM_FUNC_START(__svm_vcpu_run)
 	/* "POP" @vmcb to RAX. */
 	pop %_ASM_AX
 
+	/* Clobbers EFLAGS.ZF */
+	VM_CLEAR_CPU_BUFFERS
+
 	/* Enter guest mode */
 	sti
 
@@ -109,6 +112,18 @@ SYM_FUNC_START(__svm_vcpu_run)
 	mov %r14, VCPU_R14(%_ASM_AX)
 	mov %r15, VCPU_R15(%_ASM_AX)
 #endif
+
+	/*
+	 * Mitigate RETBleed for AMD/Hygon Zen uarch. RET should be
+	 * untrained as soon as we exit the VM and are back to the
+	 * kernel. This should be done before re-enabling interrupts
+	 * because interrupt handlers won't sanitize 'ret' if the return is
+	 * from the kernel.
+	 */
+	UNTRAIN_RET
+
+	/* SRSO */
+	ALTERNATIVE "", "call entry_ibpb", X86_FEATURE_IBPB_ON_VMEXIT
 
 	/*
 	 * Clear all general purpose registers except RSP and RAX to prevent
@@ -148,7 +163,7 @@ SYM_FUNC_START(__svm_vcpu_run)
 	pop %edi
 #endif
 	pop %_ASM_BP
-	ret
+	RET
 
 3:	cmpb $0, kvm_rebooting
 	jne 2b
@@ -178,6 +193,9 @@ SYM_FUNC_START(__svm_sev_es_vcpu_run)
 	/* Move @vmcb to RAX. */
 	mov %_ASM_ARG1, %_ASM_AX
 
+	/* Clobbers EFLAGS.ZF */
+	VM_CLEAR_CPU_BUFFERS
+
 	/* Enter guest mode */
 	sti
 
@@ -189,6 +207,15 @@ SYM_FUNC_START(__svm_sev_es_vcpu_run)
 	/* IMPORTANT: Stuff the RSB immediately after VM-Exit, before RET! */
 	FILL_RETURN_BUFFER %_ASM_AX, RSB_CLEAR_LOOPS, X86_FEATURE_RETPOLINE
 #endif
+
+	/*
+	 * Mitigate RETBleed for AMD/Hygon Zen uarch. RET should be
+	 * untrained as soon as we exit the VM and are back to the
+	 * kernel. This should be done before re-enabling interrupts
+	 * because interrupt handlers won't sanitize RET if the return is
+	 * from the kernel.
+	 */
+	UNTRAIN_RET
 
 	pop %_ASM_BX
 
@@ -202,7 +229,7 @@ SYM_FUNC_START(__svm_sev_es_vcpu_run)
 	pop %edi
 #endif
 	pop %_ASM_BP
-	ret
+	RET
 
 3:	cmpb $0, kvm_rebooting
 	jne 2b

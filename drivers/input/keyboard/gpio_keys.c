@@ -131,7 +131,7 @@ static void gpio_keys_quiesce_key(void *data)
 
 	if (!bdata->gpiod)
 		hrtimer_cancel(&bdata->release_timer);
-	if (bdata->debounce_use_hrtimer)
+	else if (bdata->debounce_use_hrtimer)
 		hrtimer_cancel(&bdata->debounce_timer);
 	else
 		cancel_delayed_work_sync(&bdata->work);
@@ -493,7 +493,7 @@ static irqreturn_t gpio_keys_irq_isr(int irq, void *dev_id)
 	if (bdata->release_delay)
 		hrtimer_start(&bdata->release_timer,
 			      ms_to_ktime(bdata->release_delay),
-			      HRTIMER_MODE_REL_HARD);
+			      HRTIMER_MODE_REL);
 out:
 	spin_unlock_irqrestore(&bdata->lock, flags);
 	return IRQ_HANDLED;
@@ -633,7 +633,7 @@ static int gpio_keys_setup_key(struct platform_device *pdev,
 
 		bdata->release_delay = button->debounce_interval;
 		hrtimer_init(&bdata->release_timer,
-			     CLOCK_REALTIME, HRTIMER_MODE_REL_HARD);
+			     CLOCK_REALTIME, HRTIMER_MODE_REL);
 		bdata->release_timer.function = gpio_keys_irq_timer;
 
 		isr = gpio_keys_irq_isr;

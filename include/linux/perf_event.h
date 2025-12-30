@@ -661,6 +661,7 @@ struct perf_event {
 	/* The cumulative AND of all event_caps for events in this group. */
 	int				group_caps;
 
+	unsigned int			group_generation;
 	struct perf_event		*group_leader;
 	struct pmu			*pmu;
 	void				*pmu_private;
@@ -679,18 +680,6 @@ struct perf_event {
 	u64				total_time_enabled;
 	u64				total_time_running;
 	u64				tstamp;
-
-	/*
-	 * timestamp shadows the actual context timing but it can
-	 * be safely used in NMI interrupt context. It reflects the
-	 * context time as it was when the event was last scheduled in,
-	 * or when ctx_sched_in failed to schedule the event because we
-	 * run out of PMC.
-	 *
-	 * ctx_time already accounts for ctx->timestamp. Therefore to
-	 * compute ctx_time for a sample, simply add perf_clock().
-	 */
-	u64				shadow_ctx_time;
 
 	struct perf_event_attr		attr;
 	u16				header_size;
@@ -735,11 +724,15 @@ struct perf_event {
 	struct fasync_struct		*fasync;
 
 	/* delayed work for NMIs and such */
-	int				pending_wakeup;
-	int				pending_kill;
-	int				pending_disable;
+	unsigned int			pending_wakeup;
+	unsigned int			pending_kill;
+	unsigned int			pending_disable;
+	unsigned int			pending_sigtrap;
 	unsigned long			pending_addr;	/* SIGTRAP */
-	struct irq_work			pending;
+	struct irq_work			pending_irq;
+	struct callback_head		pending_task;
+	unsigned int			pending_work;
+	struct rcuwait			pending_work_wait;
 
 	atomic_t			event_limit;
 
@@ -757,6 +750,8 @@ struct perf_event {
 
 	struct pid_namespace		*ns;
 	u64				id;
+
+	atomic64_t			lost_samples;
 
 	u64				(*clock)(void);
 	perf_overflow_handler_t		overflow_handler;
@@ -838,6 +833,7 @@ struct perf_event_context {
 	 */
 	u64				time;
 	u64				timestamp;
+	u64				timeoffset;
 
 	/*
 	 * These fields let us detect when two contexts have both
@@ -852,6 +848,14 @@ struct perf_event_context {
 #endif
 	void				*task_ctx_data; /* pmu specific data */
 	struct rcu_head			rcu_head;
+
+	/*
+	 * Sum (event->pending_sigtrap + event->pending_work)
+	 *
+	 * The SIGTRAP is targeted at ctx->task, as such it won't do changing
+	 * that until the signal is delivered.
+	 */
+	local_t				nr_pending;
 };
 
 /*
@@ -920,6 +924,8 @@ struct bpf_perf_event_data_kern {
 struct perf_cgroup_info {
 	u64				time;
 	u64				timestamp;
+	u64				timeoffset;
+	int				active;
 };
 
 struct perf_cgroup {
@@ -1082,14 +1088,30 @@ extern int perf_event_output(struct perf_event *event,
 			     struct pt_regs *regs);
 
 static inline bool
-is_default_overflow_handler(struct perf_event *event)
+__is_default_overflow_handler(perf_overflow_handler_t overflow_handler)
 {
-	if (likely(event->overflow_handler == perf_event_output_forward))
+	if (likely(overflow_handler == perf_event_output_forward))
 		return true;
-	if (unlikely(event->overflow_handler == perf_event_output_backward))
+	if (unlikely(overflow_handler == perf_event_output_backward))
 		return true;
 	return false;
 }
+
+#define is_default_overflow_handler(event) \
+	__is_default_overflow_handler((event)->overflow_handler)
+
+#ifdef CONFIG_BPF_SYSCALL
+static inline bool uses_default_overflow_handler(struct perf_event *event)
+{
+	if (likely(is_default_overflow_handler(event)))
+		return true;
+
+	return __is_default_overflow_handler(event->orig_overflow_handler);
+}
+#else
+#define uses_default_overflow_handler(event) \
+	is_default_overflow_handler(event)
+#endif
 
 extern void
 perf_event_header__init_id(struct perf_event_header *header,
@@ -1239,7 +1261,18 @@ extern void perf_event_bpf_event(struct bpf_prog *prog,
 				 enum perf_bpf_event_type type,
 				 u16 flags);
 
-extern struct perf_guest_info_callbacks *perf_guest_cbs;
+extern struct perf_guest_info_callbacks __rcu *perf_guest_cbs;
+static inline struct perf_guest_info_callbacks *perf_get_guest_cbs(void)
+{
+	/*
+	 * Callbacks are RCU-protected and must be READ_ONCE to avoid reloading
+	 * the callbacks between a !NULL check and dereferences, to ensure
+	 * pending stores/changes to the callback pointers are visible before a
+	 * non-NULL perf_guest_cbs is visible to readers, and to prevent a
+	 * module from unloading callbacks while readers are active.
+	 */
+	return rcu_dereference(perf_guest_cbs);
+}
 extern int perf_register_guest_info_callbacks(struct perf_guest_info_callbacks *callbacks);
 extern int perf_unregister_guest_info_callbacks(struct perf_guest_info_callbacks *callbacks);
 

@@ -10,6 +10,7 @@
 #include <linux/kvm_host.h>
 #include <linux/types.h>
 #include <linux/jump_label.h>
+#include <linux/percpu.h>
 #include <uapi/linux/psci.h>
 
 #include <kvm/arm_psci.h>
@@ -25,6 +26,7 @@
 #include <asm/debug-monitors.h>
 #include <asm/processor.h>
 #include <asm/thread_info.h>
+#include <asm/vectors.h>
 
 /* VHE specific context */
 DEFINE_PER_CPU(struct kvm_host_data, kvm_host_data);
@@ -68,7 +70,7 @@ NOKPROBE_SYMBOL(__activate_traps);
 
 static void __deactivate_traps(struct kvm_vcpu *vcpu)
 {
-	extern char vectors[];	/* kernel exception vectors */
+	const char *host_vectors = vectors;
 
 	___deactivate_traps(vcpu);
 
@@ -82,7 +84,10 @@ static void __deactivate_traps(struct kvm_vcpu *vcpu)
 	asm(ALTERNATIVE("nop", "isb", ARM64_WORKAROUND_SPECULATIVE_AT));
 
 	write_sysreg(CPACR_EL1_DEFAULT, cpacr_el1);
-	write_sysreg(vectors, vbar_el1);
+
+	if (!arm64_kernel_unmapped_at_el0())
+		host_vectors = __this_cpu_read(this_cpu_vector);
+	write_sysreg(host_vectors, vbar_el1);
 }
 NOKPROBE_SYMBOL(__deactivate_traps);
 
@@ -108,6 +113,8 @@ static int __kvm_vcpu_run_vhe(struct kvm_vcpu *vcpu)
 	guest_ctxt = &vcpu->arch.ctxt;
 
 	sysreg_save_host_state_vhe(host_ctxt);
+
+	fpsimd_lazy_switch_to_guest(vcpu);
 
 	/*
 	 * ARM erratum 1165522 requires us to configure both stage 1 and
@@ -138,6 +145,8 @@ static int __kvm_vcpu_run_vhe(struct kvm_vcpu *vcpu)
 	sysreg_save_guest_state_vhe(guest_ctxt);
 
 	__deactivate_traps(vcpu);
+
+	fpsimd_lazy_switch_to_host(vcpu);
 
 	sysreg_restore_host_state_vhe(host_ctxt);
 
@@ -215,5 +224,5 @@ void __noreturn hyp_panic(void)
 
 asmlinkage void kvm_unexpected_el2_exception(void)
 {
-	return __kvm_unexpected_el2_exception();
+	__kvm_unexpected_el2_exception();
 }

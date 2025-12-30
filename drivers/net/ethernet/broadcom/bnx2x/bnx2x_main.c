@@ -74,9 +74,19 @@
 	__stringify(BCM_5710_FW_MINOR_VERSION) "."	\
 	__stringify(BCM_5710_FW_REVISION_VERSION) "."	\
 	__stringify(BCM_5710_FW_ENGINEERING_VERSION)
+
+#define FW_FILE_VERSION_V15				\
+	__stringify(BCM_5710_FW_MAJOR_VERSION) "."      \
+	__stringify(BCM_5710_FW_MINOR_VERSION) "."	\
+	__stringify(BCM_5710_FW_REVISION_VERSION_V15) "."	\
+	__stringify(BCM_5710_FW_ENGINEERING_VERSION)
+
 #define FW_FILE_NAME_E1		"bnx2x/bnx2x-e1-" FW_FILE_VERSION ".fw"
 #define FW_FILE_NAME_E1H	"bnx2x/bnx2x-e1h-" FW_FILE_VERSION ".fw"
 #define FW_FILE_NAME_E2		"bnx2x/bnx2x-e2-" FW_FILE_VERSION ".fw"
+#define FW_FILE_NAME_E1_V15	"bnx2x/bnx2x-e1-" FW_FILE_VERSION_V15 ".fw"
+#define FW_FILE_NAME_E1H_V15	"bnx2x/bnx2x-e1h-" FW_FILE_VERSION_V15 ".fw"
+#define FW_FILE_NAME_E2_V15	"bnx2x/bnx2x-e2-" FW_FILE_VERSION_V15 ".fw"
 
 /* Time in jiffies before concluding the transmitter is hung */
 #define TX_TIMEOUT		(5*HZ)
@@ -90,6 +100,9 @@ MODULE_LICENSE("GPL");
 MODULE_FIRMWARE(FW_FILE_NAME_E1);
 MODULE_FIRMWARE(FW_FILE_NAME_E1H);
 MODULE_FIRMWARE(FW_FILE_NAME_E2);
+MODULE_FIRMWARE(FW_FILE_NAME_E1_V15);
+MODULE_FIRMWARE(FW_FILE_NAME_E1H_V15);
+MODULE_FIRMWARE(FW_FILE_NAME_E2_V15);
 
 int bnx2x_num_queues;
 module_param_named(num_queues, bnx2x_num_queues, int, 0444);
@@ -747,9 +760,7 @@ static int bnx2x_mc_assert(struct bnx2x *bp)
 		  CHIP_IS_E1(bp) ? "everest1" :
 		  CHIP_IS_E1H(bp) ? "everest1h" :
 		  CHIP_IS_E2(bp) ? "everest2" : "everest3",
-		  BCM_5710_FW_MAJOR_VERSION,
-		  BCM_5710_FW_MINOR_VERSION,
-		  BCM_5710_FW_REVISION_VERSION);
+		  bp->fw_major, bp->fw_minor, bp->fw_rev);
 
 	return rc;
 }
@@ -8417,7 +8428,7 @@ alloc_mem_err:
  * Init service functions
  */
 
-int bnx2x_set_mac_one(struct bnx2x *bp, u8 *mac,
+int bnx2x_set_mac_one(struct bnx2x *bp, const u8 *mac,
 		      struct bnx2x_vlan_mac_obj *obj, bool set,
 		      int mac_type, unsigned long *ramrod_flags)
 {
@@ -9146,7 +9157,7 @@ u32 bnx2x_send_unload_req(struct bnx2x *bp, int unload_mode)
 
 	else if (bp->wol) {
 		u32 emac_base = port ? GRCBASE_EMAC1 : GRCBASE_EMAC0;
-		u8 *mac_addr = bp->dev->dev_addr;
+		const u8 *mac_addr = bp->dev->dev_addr;
 		struct pci_dev *pdev = bp->pdev;
 		u32 val;
 		u16 pmc;
@@ -13311,16 +13322,11 @@ static int bnx2x_check_firmware(struct bnx2x *bp)
 	/* Check FW version */
 	offset = be32_to_cpu(fw_hdr->fw_version.offset);
 	fw_ver = firmware->data + offset;
-	if ((fw_ver[0] != BCM_5710_FW_MAJOR_VERSION) ||
-	    (fw_ver[1] != BCM_5710_FW_MINOR_VERSION) ||
-	    (fw_ver[2] != BCM_5710_FW_REVISION_VERSION) ||
-	    (fw_ver[3] != BCM_5710_FW_ENGINEERING_VERSION)) {
+	if (fw_ver[0] != bp->fw_major || fw_ver[1] != bp->fw_minor ||
+	    fw_ver[2] != bp->fw_rev || fw_ver[3] != bp->fw_eng) {
 		BNX2X_ERR("Bad FW version:%d.%d.%d.%d. Should be %d.%d.%d.%d\n",
-		       fw_ver[0], fw_ver[1], fw_ver[2], fw_ver[3],
-		       BCM_5710_FW_MAJOR_VERSION,
-		       BCM_5710_FW_MINOR_VERSION,
-		       BCM_5710_FW_REVISION_VERSION,
-		       BCM_5710_FW_ENGINEERING_VERSION);
+			  fw_ver[0], fw_ver[1], fw_ver[2], fw_ver[3],
+			  bp->fw_major, bp->fw_minor, bp->fw_rev, bp->fw_eng);
 		return -EINVAL;
 	}
 
@@ -13400,31 +13406,48 @@ do {									\
 
 static int bnx2x_init_firmware(struct bnx2x *bp)
 {
-	const char *fw_file_name;
+	const char *fw_file_name, *fw_file_name_v15;
 	struct bnx2x_fw_file_hdr *fw_hdr;
 	int rc;
 
 	if (bp->firmware)
 		return 0;
 
-	if (CHIP_IS_E1(bp))
+	if (CHIP_IS_E1(bp)) {
 		fw_file_name = FW_FILE_NAME_E1;
-	else if (CHIP_IS_E1H(bp))
+		fw_file_name_v15 = FW_FILE_NAME_E1_V15;
+	} else if (CHIP_IS_E1H(bp)) {
 		fw_file_name = FW_FILE_NAME_E1H;
-	else if (!CHIP_IS_E1x(bp))
+		fw_file_name_v15 = FW_FILE_NAME_E1H_V15;
+	} else if (!CHIP_IS_E1x(bp)) {
 		fw_file_name = FW_FILE_NAME_E2;
-	else {
+		fw_file_name_v15 = FW_FILE_NAME_E2_V15;
+	} else {
 		BNX2X_ERR("Unsupported chip revision\n");
 		return -EINVAL;
 	}
+
 	BNX2X_DEV_INFO("Loading %s\n", fw_file_name);
 
 	rc = request_firmware(&bp->firmware, fw_file_name, &bp->pdev->dev);
 	if (rc) {
-		BNX2X_ERR("Can't load firmware file %s\n",
-			  fw_file_name);
-		goto request_firmware_exit;
+		BNX2X_DEV_INFO("Trying to load older fw %s\n", fw_file_name_v15);
+
+		/* try to load prev version */
+		rc = request_firmware(&bp->firmware, fw_file_name_v15, &bp->pdev->dev);
+
+		if (rc)
+			goto request_firmware_exit;
+
+		bp->fw_rev = BCM_5710_FW_REVISION_VERSION_V15;
+	} else {
+		bp->fw_cap |= FW_CAP_INVALIDATE_VF_FP_HSI;
+		bp->fw_rev = BCM_5710_FW_REVISION_VERSION;
 	}
+
+	bp->fw_major = BCM_5710_FW_MAJOR_VERSION;
+	bp->fw_minor = BCM_5710_FW_MINOR_VERSION;
+	bp->fw_eng = BCM_5710_FW_ENGINEERING_VERSION;
 
 	rc = bnx2x_check_firmware(bp);
 	if (rc) {
@@ -14135,10 +14158,6 @@ static int bnx2x_eeh_nic_unload(struct bnx2x *bp)
 
 	/* Stop Tx */
 	bnx2x_tx_disable(bp);
-	/* Delete all NAPI objects */
-	bnx2x_del_all_napi(bp);
-	if (CNIC_LOADED(bp))
-		bnx2x_del_all_napi_cnic(bp);
 	netdev_reset_tc(bp->dev);
 
 	del_timer_sync(&bp->timer);
@@ -14243,6 +14262,11 @@ static pci_ers_result_t bnx2x_io_slot_reset(struct pci_dev *pdev)
 		bnx2x_drain_tx_queues(bp);
 		bnx2x_send_unload_req(bp, UNLOAD_RECOVERY);
 		bnx2x_netif_stop(bp, 1);
+		bnx2x_del_all_napi(bp);
+
+		if (CNIC_LOADED(bp))
+			bnx2x_del_all_napi_cnic(bp);
+
 		bnx2x_free_irq(bp);
 
 		/* Report UNLOAD_DONE to MCP */
@@ -14293,11 +14317,16 @@ static void bnx2x_io_resume(struct pci_dev *pdev)
 	bp->fw_seq = SHMEM_RD(bp, func_mb[BP_FW_MB_IDX(bp)].drv_mb_header) &
 							DRV_MSG_SEQ_NUMBER_MASK;
 
-	if (netif_running(dev))
-		bnx2x_nic_load(bp, LOAD_NORMAL);
+	if (netif_running(dev)) {
+		if (bnx2x_nic_load(bp, LOAD_NORMAL)) {
+			netdev_err(bp->dev, "Error during driver initialization, try unloading/reloading the driver\n");
+			goto done;
+		}
+	}
 
 	netif_device_attach(dev);
 
+done:
 	rtnl_unlock();
 }
 

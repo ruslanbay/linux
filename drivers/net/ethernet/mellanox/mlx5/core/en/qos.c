@@ -553,7 +553,8 @@ static int mlx5e_htb_convert_rate(struct mlx5e_priv *priv, u64 rate,
 
 static void mlx5e_htb_convert_ceil(struct mlx5e_priv *priv, u64 ceil, u32 *max_average_bw)
 {
-	*max_average_bw = div_u64(ceil, BYTES_IN_MBIT);
+	/* Hardware treats 0 as "unlimited", set at least 1. */
+	*max_average_bw = max_t(u32, div_u64(ceil, BYTES_IN_MBIT), 1);
 
 	qos_dbg(priv->mdev, "Convert: ceil %llu -> max_average_bw %u\n",
 		ceil, *max_average_bw);
@@ -723,7 +724,7 @@ static void mlx5e_reactivate_qos_sq(struct mlx5e_priv *priv, u16 qid, struct net
 static void mlx5e_reset_qdisc(struct net_device *dev, u16 qid)
 {
 	struct netdev_queue *dev_queue = netdev_get_tx_queue(dev, qid);
-	struct Qdisc *qdisc = dev_queue->qdisc_sleeping;
+	struct Qdisc *qdisc = rtnl_dereference(dev_queue->qdisc_sleeping);
 
 	if (!qdisc)
 		return;

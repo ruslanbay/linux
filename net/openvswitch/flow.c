@@ -34,6 +34,7 @@
 #include <net/mpls.h>
 #include <net/ndisc.h>
 #include <net/nsh.h>
+#include <net/netfilter/nf_conntrack_zones.h>
 
 #include "conntrack.h"
 #include "datapath.h"
@@ -265,7 +266,7 @@ static int parse_ipv6hdr(struct sk_buff *skb, struct sw_flow_key *key)
 	if (flags & IP6_FH_F_FRAG) {
 		if (frag_off) {
 			key->ip.frag = OVS_FRAG_TYPE_LATER;
-			key->ip.proto = nexthdr;
+			key->ip.proto = NEXTHDR_FRAGMENT;
 			return 0;
 		}
 		key->ip.frag = OVS_FRAG_TYPE_FIRST;
@@ -416,7 +417,6 @@ static int parse_icmpv6(struct sk_buff *skb, struct sw_flow_key *key,
 	 */
 	key->tp.src = htons(icmp->icmp6_type);
 	key->tp.dst = htons(icmp->icmp6_code);
-	memset(&key->ipv6.nd, 0, sizeof(key->ipv6.nd));
 
 	if (icmp->icmp6_code == 0 &&
 	    (icmp->icmp6_type == NDISC_NEIGHBOUR_SOLICITATION ||
@@ -424,6 +424,8 @@ static int parse_icmpv6(struct sk_buff *skb, struct sw_flow_key *key,
 		int icmp_len = skb->len - skb_transport_offset(skb);
 		struct nd_msg *nd;
 		int offset;
+
+		memset(&key->ipv6.nd, 0, sizeof(key->ipv6.nd));
 
 		/* In order to process neighbor discovery options, we need the
 		 * entire packet.
@@ -642,7 +644,7 @@ static int key_extract_l3l4(struct sk_buff *skb, struct sw_flow_key *key)
 			memset(&key->ipv4, 0, sizeof(key->ipv4));
 		}
 	} else if (eth_p_mpls(key->eth.type)) {
-		u8 label_count = 1;
+		size_t label_count = 1;
 
 		memset(&key->mpls, 0, sizeof(key->mpls));
 		skb_set_inner_network_header(skb, skb->mac_len);
@@ -858,8 +860,9 @@ int ovs_flow_key_extract(const struct ip_tunnel_info *tun_info,
 #if IS_ENABLED(CONFIG_NET_TC_SKB_EXT)
 	struct tc_skb_ext *tc_ext;
 #endif
-	bool post_ct = false;
+	bool post_ct = false, post_ct_snat = false, post_ct_dnat = false;
 	int res, err;
+	u16 zone = 0;
 
 	/* Extract metadata from packet. */
 	if (tun_info) {
@@ -898,6 +901,9 @@ int ovs_flow_key_extract(const struct ip_tunnel_info *tun_info,
 		key->recirc_id = tc_ext ? tc_ext->chain : 0;
 		OVS_CB(skb)->mru = tc_ext ? tc_ext->mru : 0;
 		post_ct = tc_ext ? tc_ext->post_ct : false;
+		post_ct_snat = post_ct ? tc_ext->post_ct_snat : false;
+		post_ct_dnat = post_ct ? tc_ext->post_ct_dnat : false;
+		zone = post_ct ? tc_ext->zone : 0;
 	} else {
 		key->recirc_id = 0;
 	}
@@ -906,8 +912,19 @@ int ovs_flow_key_extract(const struct ip_tunnel_info *tun_info,
 #endif
 
 	err = key_extract(skb, key);
-	if (!err)
+	if (!err) {
 		ovs_ct_fill_key(skb, key, post_ct);   /* Must be after key_extract(). */
+		if (post_ct) {
+			if (!skb_get_nfct(skb)) {
+				key->ct_zone = zone;
+			} else {
+				if (!post_ct_dnat)
+					key->ct_state &= ~OVS_CS_F_DST_NAT;
+				if (!post_ct_snat)
+					key->ct_state &= ~OVS_CS_F_SRC_NAT;
+			}
+		}
+	}
 	return err;
 }
 

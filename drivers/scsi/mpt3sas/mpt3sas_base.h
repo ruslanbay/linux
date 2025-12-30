@@ -142,6 +142,8 @@
 
 #define MPT_MAX_CALLBACKS		32
 
+#define MPT_MAX_HBA_NUM_PHYS		32
+
 #define INTERNAL_CMDS_COUNT		10	/* reserved cmds */
 /* reserved for issuing internally framed scsi io cmds */
 #define INTERNAL_SCSIIO_CMDS_COUNT	3
@@ -798,6 +800,7 @@ struct _sas_phy {
  * @enclosure_handle: handle for this a member of an enclosure
  * @device_info: bitwise defining capabilities of this sas_host/expander
  * @responding: used in _scsih_expander_device_mark_responding
+ * @nr_phys_allocated: Allocated memory for this many count phys
  * @phy: a list of phys that make up this sas_host/expander
  * @sas_port_list: list of ports attached to this sas_host/expander
  * @port: hba port entry containing node's port number info
@@ -813,6 +816,7 @@ struct _sas_node {
 	u16	enclosure_handle;
 	u64	enclosure_logical_id;
 	u8	responding;
+	u8	nr_phys_allocated;
 	struct hba_port *port;
 	struct	_sas_phy *phy;
 	struct list_head sas_port_list;
@@ -1614,6 +1618,7 @@ struct MPT3SAS_ADAPTER {
 	u8		diag_trigger_active;
 	u8		atomic_desc_capable;
 	BASE_READ_REG	base_readl;
+	BASE_READ_REG	base_readl_ext_retry;
 	struct SL_WH_MASTER_TRIGGER_T diag_trigger_master;
 	struct SL_WH_EVENT_TRIGGERS_T diag_trigger_event;
 	struct SL_WH_SCSI_TRIGGERS_T diag_trigger_scsi;
@@ -2004,9 +2009,6 @@ void mpt3sas_init_warpdrive_properties(struct MPT3SAS_ADAPTER *ioc,
 void
 mpt3sas_setup_direct_io(struct MPT3SAS_ADAPTER *ioc, struct scsi_cmnd *scmd,
 	struct _raid_device *raid_device, Mpi25SCSIIORequest_t *mpi_request);
-
-/* NCQ Prio Handling Check */
-bool scsih_ncq_prio_supp(struct scsi_device *sdev);
 
 void mpt3sas_setup_debugfs(struct MPT3SAS_ADAPTER *ioc);
 void mpt3sas_destroy_debugfs(struct MPT3SAS_ADAPTER *ioc);

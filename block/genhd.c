@@ -19,6 +19,7 @@
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/kmod.h>
+#include <linux/major.h>
 #include <linux/mutex.h>
 #include <linux/idr.h>
 #include <linux/log2.h>
@@ -181,7 +182,9 @@ static struct blk_major_name {
 	struct blk_major_name *next;
 	int major;
 	char name[16];
+#ifdef CONFIG_BLOCK_LEGACY_AUTOLOAD
 	void (*probe)(dev_t devt);
+#endif
 } *major_names[BLKDEV_MAJOR_HASH_SIZE];
 static DEFINE_MUTEX(major_names_lock);
 static DEFINE_SPINLOCK(major_names_spinlock);
@@ -268,7 +271,9 @@ int __register_blkdev(unsigned int major, const char *name,
 	}
 
 	p->major = major;
+#ifdef CONFIG_BLOCK_LEGACY_AUTOLOAD
 	p->probe = probe;
+#endif
 	strlcpy(p->name, name, sizeof(p->name));
 	p->next = NULL;
 	index = major_to_index(major);
@@ -323,7 +328,7 @@ int blk_alloc_ext_minor(void)
 {
 	int idx;
 
-	idx = ida_alloc_range(&ext_devt_ida, 0, NR_EXT_DEVT, GFP_KERNEL);
+	idx = ida_alloc_range(&ext_devt_ida, 0, NR_EXT_DEVT - 1, GFP_KERNEL);
 	if (idx == -ENOSPC)
 		return -EBUSY;
 	return idx;
@@ -420,6 +425,10 @@ int device_add_disk(struct device *parent, struct gendisk *disk,
 				DISK_MAX_PARTS);
 			disk->minors = DISK_MAX_PARTS;
 		}
+		if (disk->first_minor > MINORMASK ||
+		    disk->minors > MINORMASK + 1 ||
+		    disk->first_minor + disk->minors > MINORMASK + 1)
+			return -EINVAL;
 	} else {
 		if (WARN_ON(disk->minors))
 			return -EINVAL;
@@ -432,10 +441,6 @@ int device_add_disk(struct device *parent, struct gendisk *disk,
 		disk->flags |= GENHD_FL_EXT_DEVT;
 	}
 
-	ret = disk_alloc_events(disk);
-	if (ret)
-		goto out_free_ext_minor;
-
 	/* delay uevents, until we scanned partition table */
 	dev_set_uevent_suppress(ddev, 1);
 
@@ -446,7 +451,12 @@ int device_add_disk(struct device *parent, struct gendisk *disk,
 		ddev->devt = MKDEV(disk->major, disk->first_minor);
 	ret = device_add(ddev);
 	if (ret)
-		goto out_disk_release_events;
+		goto out_free_ext_minor;
+
+	ret = disk_alloc_events(disk);
+	if (ret)
+		goto out_device_del;
+
 	if (!sysfs_deprecated) {
 		ret = sysfs_create_link(block_depr, &ddev->kobj,
 					kobject_name(&ddev->kobj));
@@ -461,17 +471,17 @@ int device_add_disk(struct device *parent, struct gendisk *disk,
 	 */
 	pm_runtime_set_memalloc_noio(ddev, true);
 
-	ret = blk_integrity_add(disk);
-	if (ret)
-		goto out_del_block_link;
-
 	disk->part0->bd_holder_dir =
 		kobject_create_and_add("holders", &ddev->kobj);
-	if (!disk->part0->bd_holder_dir)
-		goto out_del_integrity;
+	if (!disk->part0->bd_holder_dir) {
+		ret = -ENOMEM;
+		goto out_del_block_link;
+	}
 	disk->slave_dir = kobject_create_and_add("slaves", &ddev->kobj);
-	if (!disk->slave_dir)
+	if (!disk->slave_dir) {
+		ret = -ENOMEM;
 		goto out_put_holder_dir;
+	}
 
 	ret = bd_register_pending_holders(disk);
 	if (ret < 0)
@@ -487,7 +497,7 @@ int device_add_disk(struct device *parent, struct gendisk *disk,
 		 * and don't bother scanning for partitions either.
 		 */
 		disk->flags |= GENHD_FL_SUPPRESS_PARTITION_INFO;
-		disk->flags |= GENHD_FL_NO_PART_SCAN;
+		disk->flags |= GENHD_FL_NO_PART;
 	} else {
 		ret = bdi_register(disk->bdi, "%u:%u",
 				   disk->major, disk->first_minor);
@@ -519,25 +529,38 @@ out_unregister_bdi:
 		bdi_unregister(disk->bdi);
 out_unregister_queue:
 	blk_unregister_queue(disk);
+	rq_qos_exit(disk->queue);
 out_put_slave_dir:
 	kobject_put(disk->slave_dir);
+	disk->slave_dir = NULL;
 out_put_holder_dir:
 	kobject_put(disk->part0->bd_holder_dir);
-out_del_integrity:
-	blk_integrity_del(disk);
 out_del_block_link:
 	if (!sysfs_deprecated)
 		sysfs_remove_link(block_depr, dev_name(ddev));
+	pm_runtime_set_memalloc_noio(ddev, false);
 out_device_del:
 	device_del(ddev);
-out_disk_release_events:
-	disk_release_events(disk);
 out_free_ext_minor:
 	if (disk->major == BLOCK_EXT_MAJOR)
 		blk_free_ext_minor(disk->first_minor);
 	return WARN_ON_ONCE(ret); /* keep until all callers handle errors */
 }
 EXPORT_SYMBOL(device_add_disk);
+
+/**
+ * blk_mark_disk_dead - mark a disk as dead
+ * @disk: disk to mark as dead
+ *
+ * Mark as disk as dead (e.g. surprise removed) and don't accept any new I/O
+ * to this disk.
+ */
+void blk_mark_disk_dead(struct gendisk *disk)
+{
+	set_bit(GD_DEAD, &disk->state);
+	blk_queue_start_drain(disk->queue);
+}
+EXPORT_SYMBOL_GPL(blk_mark_disk_dead);
 
 /**
  * del_gendisk - remove the gendisk
@@ -567,7 +590,6 @@ void del_gendisk(struct gendisk *disk)
 	if (WARN_ON_ONCE(!disk_live(disk) && !(disk->flags & GENHD_FL_HIDDEN)))
 		return;
 
-	blk_integrity_del(disk);
 	disk_del_events(disk);
 
 	mutex_lock(&disk->open_mutex);
@@ -603,6 +625,7 @@ void del_gendisk(struct gendisk *disk)
 
 	kobject_put(disk->part0->bd_holder_dir);
 	kobject_put(disk->slave_dir);
+	disk->slave_dir = NULL;
 
 	part_stat_set_all(disk->part0, 0);
 	disk->part0->bd_stamp = 0;
@@ -650,7 +673,8 @@ static ssize_t disk_badblocks_store(struct device *dev,
 	return badblocks_store(disk->bb, page, len, 0);
 }
 
-void blk_request_module(dev_t devt)
+#ifdef CONFIG_BLOCK_LEGACY_AUTOLOAD
+static bool blk_probe_dev(dev_t devt)
 {
 	unsigned int major = MAJOR(devt);
 	struct blk_major_name **n;
@@ -660,15 +684,28 @@ void blk_request_module(dev_t devt)
 		if ((*n)->major == major && (*n)->probe) {
 			(*n)->probe(devt);
 			mutex_unlock(&major_names_lock);
-			return;
+			return true;
 		}
 	}
 	mutex_unlock(&major_names_lock);
-
-	if (request_module("block-major-%d-%d", MAJOR(devt), MINOR(devt)) > 0)
-		/* Make old-style 2.4 aliases work */
-		request_module("block-major-%d", MAJOR(devt));
+	return false;
 }
+
+void blk_request_module(dev_t devt)
+{
+	int error;
+
+	if (blk_probe_dev(devt))
+		return;
+
+	error = request_module("block-major-%d-%d", MAJOR(devt), MINOR(devt));
+	/* Make old-style 2.4 aliases work */
+	if (error > 0)
+		error = request_module("block-major-%d", MAJOR(devt));
+	if (!error)
+		blk_probe_dev(devt);
+}
+#endif /* CONFIG_BLOCK_LEGACY_AUTOLOAD */
 
 /*
  * print a full list of all partitions - intended for places where the root
@@ -1058,6 +1095,9 @@ static struct attribute_group disk_attr_group = {
 
 static const struct attribute_group *disk_attr_groups[] = {
 	&disk_attr_group,
+#ifdef CONFIG_BLK_DEV_INTEGRITY
+	&blk_integrity_attr_group,
+#endif
 	NULL
 };
 
@@ -1081,6 +1121,8 @@ static void disk_release(struct device *dev)
 
 	might_sleep();
 	WARN_ON_ONCE(disk_live(disk));
+
+	blk_mq_cancel_work_sync(disk->queue);
 
 	disk_release_events(disk);
 	kfree(disk->random);

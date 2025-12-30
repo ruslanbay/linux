@@ -417,6 +417,12 @@ struct amdgpu_dpm {
 	enum amd_dpm_forced_level forced_level;
 };
 
+enum ip_power_state {
+	POWER_STATE_UNKNOWN,
+	POWER_STATE_ON,
+	POWER_STATE_OFF,
+};
+
 struct amdgpu_pm {
 	struct mutex		mutex;
 	u32                     current_sclk;
@@ -452,6 +458,8 @@ struct amdgpu_pm {
 	struct i2c_adapter smu_i2c;
 	struct mutex		smu_i2c_mutex;
 	struct list_head	pm_attr_list;
+
+	atomic_t		pwr_state[AMD_IP_BLOCK_TYPE_NUM];
 };
 
 #define R600_SSTU_DFLT                               0
@@ -492,8 +500,6 @@ u32 amdgpu_dpm_get_vrefresh(struct amdgpu_device *adev);
 void amdgpu_dpm_get_active_displays(struct amdgpu_device *adev);
 int amdgpu_dpm_read_sensor(struct amdgpu_device *adev, enum amd_pp_sensors sensor,
 			   void *data, uint32_t *size);
-
-bool amdgpu_is_internal_thermal_sensor(enum amdgpu_int_thermal_type sensor);
 
 int amdgpu_get_platform_caps(struct amdgpu_device *adev);
 

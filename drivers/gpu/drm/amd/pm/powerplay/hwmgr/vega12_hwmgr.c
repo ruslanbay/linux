@@ -294,12 +294,12 @@ static int vega12_set_features_platform_caps(struct pp_hwmgr *hwmgr)
 	return 0;
 }
 
-static void vega12_init_dpm_defaults(struct pp_hwmgr *hwmgr)
+static int vega12_init_dpm_defaults(struct pp_hwmgr *hwmgr)
 {
 	struct vega12_hwmgr *data = (struct vega12_hwmgr *)(hwmgr->backend);
 	struct amdgpu_device *adev = hwmgr->adev;
 	uint32_t top32, bottom32;
-	int i;
+	int i, ret;
 
 	data->smu_features[GNLD_DPM_PREFETCHER].smu_feature_id =
 			FEATURE_DPM_PREFETCHER_BIT;
@@ -365,10 +365,16 @@ static void vega12_init_dpm_defaults(struct pp_hwmgr *hwmgr)
 	}
 
 	/* Get the SN to turn into a Unique ID */
-	smum_send_msg_to_smc(hwmgr, PPSMC_MSG_ReadSerialNumTop32, &top32);
-	smum_send_msg_to_smc(hwmgr, PPSMC_MSG_ReadSerialNumBottom32, &bottom32);
+	ret = smum_send_msg_to_smc(hwmgr, PPSMC_MSG_ReadSerialNumTop32, &top32);
+	if (ret)
+		return ret;
+	ret = smum_send_msg_to_smc(hwmgr, PPSMC_MSG_ReadSerialNumBottom32, &bottom32);
+	if (ret)
+		return ret;
 
 	adev->unique_id = ((uint64_t)bottom32 << 32) | top32;
+
+	return 0;
 }
 
 static int vega12_set_private_data_based_on_pptable(struct pp_hwmgr *hwmgr)
@@ -411,7 +417,11 @@ static int vega12_hwmgr_backend_init(struct pp_hwmgr *hwmgr)
 
 	vega12_set_features_platform_caps(hwmgr);
 
-	vega12_init_dpm_defaults(hwmgr);
+	result = vega12_init_dpm_defaults(hwmgr);
+	if (result) {
+		pr_err("%s failed\n", __func__);
+		return result;
+	}
 
 	/* Parse pptable data read from VBIOS */
 	vega12_set_private_data_based_on_pptable(hwmgr);
@@ -2141,6 +2151,8 @@ static int vega12_get_ppfeature_status(struct pp_hwmgr *hwmgr, char *buf)
 	int ret = 0;
 	int size = 0;
 
+	phm_get_sysfs_buf(&buf, &size);
+
 	ret = vega12_get_enabled_smc_features(hwmgr, &features_enabled);
 	PP_ASSERT_WITH_CODE(!ret,
 		"[EnableAllSmuFeatures] Failed to get enabled smc features!",
@@ -2256,7 +2268,7 @@ static int vega12_print_clock_levels(struct pp_hwmgr *hwmgr,
 				"Attempt to get gfx clk levels Failed!",
 				return -1);
 		for (i = 0; i < clocks.num_levels; i++)
-			size += sysfs_emit_at(buf, size, "%d: %uMhz %s\n",
+			size += sprintf(buf + size, "%d: %uMhz %s\n",
 				i, clocks.data[i].clocks_in_khz / 1000,
 				(clocks.data[i].clocks_in_khz / 1000 == now / 100) ? "*" : "");
 		break;
@@ -2272,7 +2284,7 @@ static int vega12_print_clock_levels(struct pp_hwmgr *hwmgr,
 				"Attempt to get memory clk levels Failed!",
 				return -1);
 		for (i = 0; i < clocks.num_levels; i++)
-			size += sysfs_emit_at(buf, size, "%d: %uMhz %s\n",
+			size += sprintf(buf + size, "%d: %uMhz %s\n",
 				i, clocks.data[i].clocks_in_khz / 1000,
 				(clocks.data[i].clocks_in_khz / 1000 == now / 100) ? "*" : "");
 		break;
@@ -2290,7 +2302,7 @@ static int vega12_print_clock_levels(struct pp_hwmgr *hwmgr,
 				"Attempt to get soc clk levels Failed!",
 				return -1);
 		for (i = 0; i < clocks.num_levels; i++)
-			size += sysfs_emit_at(buf, size, "%d: %uMhz %s\n",
+			size += sprintf(buf + size, "%d: %uMhz %s\n",
 				i, clocks.data[i].clocks_in_khz / 1000,
 				(clocks.data[i].clocks_in_khz / 1000 == now) ? "*" : "");
 		break;
@@ -2308,7 +2320,7 @@ static int vega12_print_clock_levels(struct pp_hwmgr *hwmgr,
 				"Attempt to get dcef clk levels Failed!",
 				return -1);
 		for (i = 0; i < clocks.num_levels; i++)
-			size += sysfs_emit_at(buf, size, "%d: %uMhz %s\n",
+			size += sprintf(buf + size, "%d: %uMhz %s\n",
 				i, clocks.data[i].clocks_in_khz / 1000,
 				(clocks.data[i].clocks_in_khz / 1000 == now) ? "*" : "");
 		break;

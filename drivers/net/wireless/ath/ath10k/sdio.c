@@ -3,6 +3,7 @@
  * Copyright (c) 2004-2011 Atheros Communications Inc.
  * Copyright (c) 2011-2012,2017 Qualcomm Atheros, Inc.
  * Copyright (c) 2016-2017 Erik Stromdahl <erik.stromdahl@gmail.com>
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -1363,8 +1364,11 @@ static void ath10k_rx_indication_async_work(struct work_struct *work)
 		ep->ep_ops.ep_rx_complete(ar, skb);
 	}
 
-	if (test_bit(ATH10K_FLAG_CORE_REGISTERED, &ar->dev_flags))
+	if (test_bit(ATH10K_FLAG_CORE_REGISTERED, &ar->dev_flags)) {
+		local_bh_disable();
 		napi_schedule(&ar->napi);
+		local_bh_enable();
+	}
 }
 
 static int ath10k_sdio_read_rtc_state(struct ath10k_sdio *ar_sdio, unsigned char *state)
@@ -2645,10 +2649,9 @@ static void ath10k_sdio_remove(struct sdio_func *func)
 
 	netif_napi_del(&ar->napi);
 
-	ath10k_core_destroy(ar);
-
-	flush_workqueue(ar_sdio->workqueue);
 	destroy_workqueue(ar_sdio->workqueue);
+
+	ath10k_core_destroy(ar);
 }
 
 static const struct sdio_device_id ath10k_sdio_devices[] = {

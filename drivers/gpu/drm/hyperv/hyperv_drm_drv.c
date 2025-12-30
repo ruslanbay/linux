@@ -198,8 +198,6 @@ static int hyperv_vmbus_probe(struct hv_device *hdev,
 	if (ret)
 		drm_warn(dev, "Failed to update vram location.\n");
 
-	hv->dirt_needed = true;
-
 	ret = hyperv_mode_config_init(hv);
 	if (ret)
 		goto err_vmbus_close;
@@ -225,12 +223,29 @@ static int hyperv_vmbus_remove(struct hv_device *hdev)
 {
 	struct drm_device *dev = hv_get_drvdata(hdev);
 	struct hyperv_drm_device *hv = to_hv(dev);
+	struct pci_dev *pdev;
 
 	drm_dev_unplug(dev);
 	drm_atomic_helper_shutdown(dev);
 	vmbus_close(hdev->channel);
 	hv_set_drvdata(hdev, NULL);
-	vmbus_free_mmio(hv->mem->start, hv->fb_size);
+
+	/*
+	 * Free allocated MMIO memory only on Gen2 VMs.
+	 * On Gen1 VMs, release the PCI device
+	 */
+	if (efi_enabled(EFI_BOOT)) {
+		vmbus_free_mmio(hv->mem->start, hv->fb_size);
+	} else {
+		pdev = pci_get_device(PCI_VENDOR_ID_MICROSOFT,
+				      PCI_DEVICE_ID_HYPERV_VIDEO, NULL);
+		if (!pdev) {
+			drm_err(dev, "Unable to find PCI Hyper-V video\n");
+			return -ENODEV;
+		}
+		pci_release_region(pdev, 0);
+		pci_dev_put(pdev);
+	}
 
 	return 0;
 }

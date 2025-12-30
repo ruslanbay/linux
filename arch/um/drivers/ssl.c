@@ -47,9 +47,7 @@ static struct line_driver driver = {
 	.minor_start 		= 64,
 	.type 		 	= TTY_DRIVER_TYPE_SERIAL,
 	.subtype 	 	= 0,
-	.read_irq 		= SSL_IRQ,
 	.read_irq_name 		= "ssl",
-	.write_irq 		= SSL_WRITE_IRQ,
 	.write_irq_name 	= "ssl-write",
 	.mc  = {
 		.list		= LIST_HEAD_INIT(driver.mc.list),
@@ -201,4 +199,7 @@ static int ssl_non_raw_setup(char *str)
 	return 1;
 }
 __setup("ssl-non-raw", ssl_non_raw_setup);
-__channel_help(ssl_non_raw_setup, "set serial lines to non-raw mode");
+__uml_help(ssl_non_raw_setup,
+"ssl-non-raw\n"
+"    Set serial lines to non-raw mode.\n\n"
+);

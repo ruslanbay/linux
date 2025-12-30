@@ -150,6 +150,8 @@ static void test_task_stack(void)
 	do_dummy_read(skel->progs.dump_task_stack);
 	do_dummy_read(skel->progs.get_task_user_stacks);
 
+	ASSERT_EQ(skel->bss->num_user_stacks, 1, "num_user_stacks");
+
 	bpf_iter_task_stack__destroy(skel);
 }
 
@@ -1208,13 +1210,14 @@ static void test_task_vma(void)
 		goto out;
 
 	/* Read CMP_BUFFER_SIZE (1kB) from bpf_iter. Read in small chunks
-	 * to trigger seq_file corner cases. The expected output is much
-	 * longer than 1kB, so the while loop will terminate.
+	 * to trigger seq_file corner cases.
 	 */
 	len = 0;
 	while (len < CMP_BUFFER_SIZE) {
 		err = read_fd_into_buffer(iter_fd, task_vma_output + len,
 					  min(read_size, CMP_BUFFER_SIZE - len));
+		if (!err)
+			break;
 		if (CHECK(err < 0, "read_iter_fd", "read_iter_fd failed\n"))
 			goto out;
 		len += err;

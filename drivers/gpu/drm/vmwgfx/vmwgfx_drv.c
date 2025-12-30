@@ -707,23 +707,15 @@ static int vmw_dma_masks(struct vmw_private *dev_priv)
 static int vmw_vram_manager_init(struct vmw_private *dev_priv)
 {
 	int ret;
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-	ret = vmw_thp_init(dev_priv);
-#else
 	ret = ttm_range_man_init(&dev_priv->bdev, TTM_PL_VRAM, false,
 				 dev_priv->vram_size >> PAGE_SHIFT);
-#endif
 	ttm_resource_manager_set_used(ttm_manager_type(&dev_priv->bdev, TTM_PL_VRAM), false);
 	return ret;
 }
 
 static void vmw_vram_manager_fini(struct vmw_private *dev_priv)
 {
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-	vmw_thp_fini(dev_priv);
-#else
 	ttm_range_man_fini(&dev_priv->bdev, TTM_PL_VRAM);
-#endif
 }
 
 static int vmw_setup_pci_resources(struct vmw_private *dev,
@@ -912,13 +904,6 @@ static int vmw_driver_load(struct vmw_private *dev_priv, u32 pci_id)
 				vmw_read(dev_priv,
 					 SVGA_REG_SUGGESTED_GBOBJECT_MEM_SIZE_KB);
 
-		/*
-		 * Workaround for low memory 2D VMs to compensate for the
-		 * allocation taken by fbdev
-		 */
-		if (!(dev_priv->capabilities & SVGA_CAP_3D))
-			mem_size *= 3;
-
 		dev_priv->max_mob_pages = mem_size * 1024 / PAGE_SIZE;
 		dev_priv->max_primary_mem =
 			vmw_read(dev_priv, SVGA_REG_MAX_PRIMARY_MEM);
@@ -1071,6 +1056,12 @@ static int vmw_driver_load(struct vmw_private *dev_priv, u32 pci_id)
 				 "3D will be disabled.\n");
 			dev_priv->has_mob = false;
 		}
+		if (vmw_sys_man_init(dev_priv) != 0) {
+			drm_info(&dev_priv->drm,
+				 "No MOB page table memory available. "
+				 "3D will be disabled.\n");
+			dev_priv->has_mob = false;
+		}
 	}
 
 	if (dev_priv->has_mob && (dev_priv->capabilities & SVGA_CAP_DX)) {
@@ -1121,8 +1112,10 @@ out_no_fifo:
 	vmw_overlay_close(dev_priv);
 	vmw_kms_close(dev_priv);
 out_no_kms:
-	if (dev_priv->has_mob)
+	if (dev_priv->has_mob) {
 		vmw_gmrid_man_fini(dev_priv, VMW_PL_MOB);
+		vmw_sys_man_fini(dev_priv);
+	}
 	if (dev_priv->has_gmr)
 		vmw_gmrid_man_fini(dev_priv, VMW_PL_GMR);
 	vmw_devcaps_destroy(dev_priv);
@@ -1156,7 +1149,7 @@ static void vmw_driver_unload(struct drm_device *dev)
 	unregister_pm_notifier(&dev_priv->pm_nb);
 
 	if (dev_priv->ctx.res_ht_initialized)
-		drm_ht_remove(&dev_priv->ctx.res_ht);
+		vmwgfx_ht_remove(&dev_priv->ctx.res_ht);
 	vfree(dev_priv->ctx.cmd_bounce);
 	if (dev_priv->enable_fb) {
 		vmw_fb_off(dev_priv);
@@ -1172,8 +1165,10 @@ static void vmw_driver_unload(struct drm_device *dev)
 		vmw_gmrid_man_fini(dev_priv, VMW_PL_GMR);
 
 	vmw_release_device_early(dev_priv);
-	if (dev_priv->has_mob)
+	if (dev_priv->has_mob) {
 		vmw_gmrid_man_fini(dev_priv, VMW_PL_MOB);
+		vmw_sys_man_fini(dev_priv);
+	}
 	vmw_devcaps_destroy(dev_priv);
 	vmw_vram_manager_fini(dev_priv);
 	ttm_device_fini(&dev_priv->bdev);
@@ -1617,34 +1612,40 @@ static int vmw_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	ret = drm_aperture_remove_conflicting_pci_framebuffers(pdev, &driver);
 	if (ret)
-		return ret;
+		goto out_error;
 
 	ret = pcim_enable_device(pdev);
 	if (ret)
-		return ret;
+		goto out_error;
 
 	vmw = devm_drm_dev_alloc(&pdev->dev, &driver,
 				 struct vmw_private, drm);
-	if (IS_ERR(vmw))
-		return PTR_ERR(vmw);
+	if (IS_ERR(vmw)) {
+		ret = PTR_ERR(vmw);
+		goto out_error;
+	}
 
 	pci_set_drvdata(pdev, &vmw->drm);
 
 	ret = ttm_mem_global_init(&ttm_mem_glob, &pdev->dev);
 	if (ret)
-		return ret;
+		goto out_error;
 
 	ret = vmw_driver_load(vmw, ent->device);
 	if (ret)
-		return ret;
+		goto out_release;
 
 	ret = drm_dev_register(&vmw->drm, 0);
-	if (ret) {
-		vmw_driver_unload(&vmw->drm);
-		return ret;
-	}
+	if (ret)
+		goto out_unload;
 
 	return 0;
+out_unload:
+	vmw_driver_unload(&vmw->drm);
+out_release:
+	ttm_mem_global_release(&ttm_mem_glob);
+out_error:
+	return ret;
 }
 
 static int __init vmwgfx_init(void)

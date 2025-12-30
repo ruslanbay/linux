@@ -22,6 +22,7 @@ static struct mac_ops	rpm_mac_ops   = {
 	.tx_stats_cnt   =       34,
 	.get_nr_lmacs	=	rpm_get_nr_lmacs,
 	.get_lmac_type  =       rpm_get_lmac_type,
+	.lmac_fifo_len	=	rpm_get_lmac_fifo_len,
 	.mac_lmac_intl_lbk =    rpm_lmac_internal_loopback,
 	.mac_get_rx_stats  =	rpm_get_rx_stats,
 	.mac_get_tx_stats  =	rpm_get_tx_stats,
@@ -29,6 +30,9 @@ static struct mac_ops	rpm_mac_ops   = {
 	.mac_get_pause_frm_status =	rpm_lmac_get_pause_frm_status,
 	.mac_enadis_pause_frm =		rpm_lmac_enadis_pause_frm,
 	.mac_pause_frm_config =		rpm_lmac_pause_frm_config,
+	.mac_enadis_ptp_config =	rpm_lmac_ptp_config,
+	.mac_rx_tx_enable =		rpm_lmac_rx_tx_enable,
+	.mac_tx_enable =		rpm_lmac_tx_enable,
 };
 
 struct mac_ops *rpm_get_mac_ops(void)
@@ -51,6 +55,43 @@ int rpm_get_nr_lmacs(void *rpmd)
 	rpm_t *rpm = rpmd;
 
 	return hweight8(rpm_read(rpm, 0, CGXX_CMRX_RX_LMACS) & 0xFULL);
+}
+
+int rpm_lmac_tx_enable(void *rpmd, int lmac_id, bool enable)
+{
+	rpm_t *rpm = rpmd;
+	u64 cfg, last;
+
+	if (!is_lmac_valid(rpm, lmac_id))
+		return -ENODEV;
+
+	cfg = rpm_read(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG);
+	last = cfg;
+	if (enable)
+		cfg |= RPM_TX_EN;
+	else
+		cfg &= ~(RPM_TX_EN);
+
+	if (cfg != last)
+		rpm_write(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG, cfg);
+	return !!(last & RPM_TX_EN);
+}
+
+int rpm_lmac_rx_tx_enable(void *rpmd, int lmac_id, bool enable)
+{
+	rpm_t *rpm = rpmd;
+	u64 cfg;
+
+	if (!is_lmac_valid(rpm, lmac_id))
+		return -ENODEV;
+
+	cfg = rpm_read(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG);
+	if (enable)
+		cfg |= RPM_RX_EN | RPM_TX_EN;
+	else
+		cfg &= ~(RPM_RX_EN | RPM_TX_EN);
+	rpm_write(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG, cfg);
+	return 0;
 }
 
 void rpm_lmac_enadis_rx_pause_fwding(void *rpmd, int lmac_id, bool enable)
@@ -127,26 +168,6 @@ void rpm_lmac_pause_frm_config(void *rpmd, int lmac_id, bool enable)
 	u64 cfg;
 
 	if (enable) {
-		/* Enable 802.3 pause frame mode */
-		cfg = rpm_read(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG);
-		cfg &= ~RPMX_MTI_MAC100X_COMMAND_CONFIG_PFC_MODE;
-		rpm_write(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG, cfg);
-
-		/* Enable receive pause frames */
-		cfg = rpm_read(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG);
-		cfg &= ~RPMX_MTI_MAC100X_COMMAND_CONFIG_RX_P_DISABLE;
-		rpm_write(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG, cfg);
-
-		/* Enable forward pause to TX block */
-		cfg = rpm_read(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG);
-		cfg &= ~RPMX_MTI_MAC100X_COMMAND_CONFIG_PAUSE_IGNORE;
-		rpm_write(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG, cfg);
-
-		/* Enable pause frames transmission */
-		cfg = rpm_read(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG);
-		cfg &= ~RPMX_MTI_MAC100X_COMMAND_CONFIG_TX_P_DISABLE;
-		rpm_write(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG, cfg);
-
 		/* Set pause time and interval */
 		cfg = rpm_read(rpm, lmac_id,
 			       RPMX_MTI_MAC100X_CL01_PAUSE_QUANTA);
@@ -159,23 +180,22 @@ void rpm_lmac_pause_frm_config(void *rpmd, int lmac_id, bool enable)
 		cfg &= ~0xFFFFULL;
 		rpm_write(rpm, lmac_id, RPMX_MTI_MAC100X_CL01_QUANTA_THRESH,
 			  cfg | (RPM_DEFAULT_PAUSE_TIME / 2));
-
-	} else {
-		/* ALL pause frames received are completely ignored */
-		cfg = rpm_read(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG);
-		cfg |= RPMX_MTI_MAC100X_COMMAND_CONFIG_RX_P_DISABLE;
-		rpm_write(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG, cfg);
-
-		/* Disable forward pause to TX block */
-		cfg = rpm_read(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG);
-		cfg |= RPMX_MTI_MAC100X_COMMAND_CONFIG_PAUSE_IGNORE;
-		rpm_write(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG, cfg);
-
-		/* Disable pause frames transmission */
-		cfg = rpm_read(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG);
-		cfg |= RPMX_MTI_MAC100X_COMMAND_CONFIG_TX_P_DISABLE;
-		rpm_write(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG, cfg);
 	}
+
+	/* ALL pause frames received are completely ignored */
+	cfg = rpm_read(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG);
+	cfg |= RPMX_MTI_MAC100X_COMMAND_CONFIG_RX_P_DISABLE;
+	rpm_write(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG, cfg);
+
+	/* Disable forward pause to TX block */
+	cfg = rpm_read(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG);
+	cfg |= RPMX_MTI_MAC100X_COMMAND_CONFIG_PAUSE_IGNORE;
+	rpm_write(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG, cfg);
+
+	/* Disable pause frames transmission */
+	cfg = rpm_read(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG);
+	cfg |= RPMX_MTI_MAC100X_COMMAND_CONFIG_TX_P_DISABLE;
+	rpm_write(rpm, lmac_id, RPMX_MTI_MAC100X_COMMAND_CONFIG, cfg);
 }
 
 int rpm_get_rx_stats(void *rpmd, int lmac_id, int idx, u64 *rx_stat)
@@ -236,10 +256,39 @@ u8 rpm_get_lmac_type(void *rpmd, int lmac_id)
 	int err;
 
 	req = FIELD_SET(CMDREG_ID, CGX_CMD_GET_LINK_STS, req);
-	err = cgx_fwi_cmd_generic(req, &resp, rpm, 0);
+	err = cgx_fwi_cmd_generic(req, &resp, rpm, lmac_id);
 	if (!err)
 		return FIELD_GET(RESP_LINKSTAT_LMAC_TYPE, resp);
 	return err;
+}
+
+u32 rpm_get_lmac_fifo_len(void *rpmd, int lmac_id)
+{
+	rpm_t *rpm = rpmd;
+	u64 hi_perf_lmac;
+	u8 num_lmacs;
+	u32 fifo_len;
+
+	fifo_len = rpm->mac_ops->fifo_len;
+	num_lmacs = rpm->mac_ops->get_nr_lmacs(rpm);
+
+	switch (num_lmacs) {
+	case 1:
+		return fifo_len;
+	case 2:
+		return fifo_len / 2;
+	case 3:
+		/* LMAC marked as hi_perf gets half of the FIFO and rest 1/4th */
+		hi_perf_lmac = rpm_read(rpm, 0, CGXX_CMRX_RX_LMACS);
+		hi_perf_lmac = (hi_perf_lmac >> 4) & 0x3ULL;
+		if (lmac_id == hi_perf_lmac)
+			return fifo_len / 2;
+		return fifo_len / 4;
+	case 4:
+	default:
+		return fifo_len / 4;
+	}
+	return 0;
 }
 
 int rpm_lmac_internal_loopback(void *rpmd, int lmac_id, bool enable)
@@ -251,22 +300,35 @@ int rpm_lmac_internal_loopback(void *rpmd, int lmac_id, bool enable)
 	if (!rpm || lmac_id >= rpm->lmac_count)
 		return -ENODEV;
 	lmac_type = rpm->mac_ops->get_lmac_type(rpm, lmac_id);
-	if (lmac_type == LMAC_MODE_100G_R) {
-		cfg = rpm_read(rpm, lmac_id, RPMX_MTI_PCS100X_CONTROL1);
 
-		if (enable)
-			cfg |= RPMX_MTI_PCS_LBK;
-		else
-			cfg &= ~RPMX_MTI_PCS_LBK;
-		rpm_write(rpm, lmac_id, RPMX_MTI_PCS100X_CONTROL1, cfg);
-	} else {
-		cfg = rpm_read(rpm, lmac_id, RPMX_MTI_LPCSX_CONTROL1);
-		if (enable)
-			cfg |= RPMX_MTI_PCS_LBK;
-		else
-			cfg &= ~RPMX_MTI_PCS_LBK;
-		rpm_write(rpm, lmac_id, RPMX_MTI_LPCSX_CONTROL1, cfg);
+	if (lmac_type == LMAC_MODE_QSGMII || lmac_type == LMAC_MODE_SGMII) {
+		dev_err(&rpm->pdev->dev, "loopback not supported for LPC mode\n");
+		return 0;
 	}
 
+	cfg = rpm_read(rpm, lmac_id, RPMX_MTI_PCS100X_CONTROL1);
+
+	if (enable)
+		cfg |= RPMX_MTI_PCS_LBK;
+	else
+		cfg &= ~RPMX_MTI_PCS_LBK;
+	rpm_write(rpm, lmac_id, RPMX_MTI_PCS100X_CONTROL1, cfg);
+
 	return 0;
+}
+
+void rpm_lmac_ptp_config(void *rpmd, int lmac_id, bool enable)
+{
+	rpm_t *rpm = rpmd;
+	u64 cfg;
+
+	if (!is_lmac_valid(rpm, lmac_id))
+		return;
+
+	cfg = rpm_read(rpm, lmac_id, RPMX_CMRX_CFG);
+	if (enable)
+		cfg |= RPMX_RX_TS_PREPEND;
+	else
+		cfg &= ~RPMX_RX_TS_PREPEND;
+	rpm_write(rpm, lmac_id, RPMX_CMRX_CFG, cfg);
 }

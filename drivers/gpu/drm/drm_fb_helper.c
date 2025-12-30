@@ -683,22 +683,21 @@ static void drm_fb_helper_damage(struct fb_info *info, u32 x, u32 y,
 /**
  * drm_fb_helper_deferred_io() - fbdev deferred_io callback function
  * @info: fb_info struct pointer
- * @pagelist: list of mmap framebuffer pages that have to be flushed
+ * @pagereflist: list of mmap framebuffer pages that have to be flushed
  *
  * This function is used as the &fb_deferred_io.deferred_io
  * callback function for flushing the fbdev mmap writes.
  */
-void drm_fb_helper_deferred_io(struct fb_info *info,
-			       struct list_head *pagelist)
+void drm_fb_helper_deferred_io(struct fb_info *info, struct list_head *pagereflist)
 {
 	unsigned long start, end, min, max;
-	struct page *page;
+	struct fb_deferred_io_pageref *pageref;
 	u32 y1, y2;
 
 	min = ULONG_MAX;
 	max = 0;
-	list_for_each_entry(page, pagelist, lru) {
-		start = page->index << PAGE_SHIFT;
+	list_for_each_entry(pageref, pagereflist, list) {
+		start = pageref->offset;
 		end = start + PAGE_SIZE - 1;
 		min = min(min, start);
 		max = max(max, end);
@@ -1327,6 +1326,9 @@ int drm_fb_helper_check_var(struct fb_var_screeninfo *var,
 		return -EINVAL;
 	}
 
+	var->xres_virtual = fb->width;
+	var->yres_virtual = fb->height;
+
 	/*
 	 * Workaround for SDL 1.2, which is known to be setting all pixel format
 	 * fields values to zero in some cases. We treat this situation as a
@@ -1405,14 +1407,14 @@ int drm_fb_helper_set_par(struct fb_info *info)
 }
 EXPORT_SYMBOL(drm_fb_helper_set_par);
 
-static void pan_set(struct drm_fb_helper *fb_helper, int x, int y)
+static void pan_set(struct drm_fb_helper *fb_helper, int dx, int dy)
 {
 	struct drm_mode_set *mode_set;
 
 	mutex_lock(&fb_helper->client.modeset_mutex);
 	drm_client_for_each_modeset(mode_set, &fb_helper->client) {
-		mode_set->x = x;
-		mode_set->y = y;
+		mode_set->x += dx;
+		mode_set->y += dy;
 	}
 	mutex_unlock(&fb_helper->client.modeset_mutex);
 }
@@ -1421,16 +1423,18 @@ static int pan_display_atomic(struct fb_var_screeninfo *var,
 			      struct fb_info *info)
 {
 	struct drm_fb_helper *fb_helper = info->par;
-	int ret;
+	int ret, dx, dy;
 
-	pan_set(fb_helper, var->xoffset, var->yoffset);
+	dx = var->xoffset - info->var.xoffset;
+	dy = var->yoffset - info->var.yoffset;
+	pan_set(fb_helper, dx, dy);
 
 	ret = drm_client_modeset_commit_locked(&fb_helper->client);
 	if (!ret) {
 		info->var.xoffset = var->xoffset;
 		info->var.yoffset = var->yoffset;
 	} else
-		pan_set(fb_helper, info->var.xoffset, info->var.yoffset);
+		pan_set(fb_helper, -dx, -dy);
 
 	return ret;
 }
@@ -1743,7 +1747,13 @@ void drm_fb_helper_fill_info(struct fb_info *info,
 			       sizes->fb_width, sizes->fb_height);
 
 	info->par = fb_helper;
-	snprintf(info->fix.id, sizeof(info->fix.id), "%s",
+	/*
+	 * The DRM drivers fbdev emulation device name can be confusing if the
+	 * driver name also has a "drm" suffix on it. Leading to names such as
+	 * "simpledrmdrmfb" in /proc/fb. Unfortunately, it's an uAPI and can't
+	 * be changed due user-space tools (e.g: pm-utils) matching against it.
+	 */
+	snprintf(info->fix.id, sizeof(info->fix.id), "%sdrmfb",
 		 fb_helper->dev->driver->name);
 
 }
@@ -2340,6 +2350,7 @@ static int drm_fb_helper_generic_probe(struct drm_fb_helper *fb_helper,
 	fbi->fbops = &drm_fbdev_fb_ops;
 	fbi->screen_size = fb->height * fb->pitches[0];
 	fbi->fix.smem_len = fbi->screen_size;
+	fbi->flags = FBINFO_DEFAULT;
 
 	drm_fb_helper_fill_info(fbi, fb_helper, sizes);
 
@@ -2347,19 +2358,21 @@ static int drm_fb_helper_generic_probe(struct drm_fb_helper *fb_helper,
 		fbi->screen_buffer = vzalloc(fbi->screen_size);
 		if (!fbi->screen_buffer)
 			return -ENOMEM;
+		fbi->flags |= FBINFO_VIRTFB | FBINFO_READS_FAST;
 
 		fbi->fbdefio = &drm_fbdev_defio;
-
 		fb_deferred_io_init(fbi);
 	} else {
 		/* buffer is mapped for HW framebuffer */
 		ret = drm_client_buffer_vmap(fb_helper->buffer, &map);
 		if (ret)
 			return ret;
-		if (map.is_iomem)
+		if (map.is_iomem) {
 			fbi->screen_base = map.vaddr_iomem;
-		else
+		} else {
 			fbi->screen_buffer = map.vaddr;
+			fbi->flags |= FBINFO_VIRTFB;
+		}
 
 		/*
 		 * Shamelessly leak the physical address to user-space. As

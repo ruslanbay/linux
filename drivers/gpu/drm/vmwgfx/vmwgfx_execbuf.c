@@ -472,7 +472,7 @@ static int vmw_resource_context_res_add(struct vmw_private *dev_priv,
 	    vmw_res_type(ctx) == vmw_res_dx_context) {
 		for (i = 0; i < cotable_max; ++i) {
 			res = vmw_context_cotable(ctx, i);
-			if (IS_ERR(res))
+			if (IS_ERR_OR_NULL(res))
 				continue;
 
 			ret = vmw_execbuf_res_noctx_val_add(sw_context, res,
@@ -1277,6 +1277,8 @@ static int vmw_cmd_dx_define_query(struct vmw_private *dev_priv,
 		return -EINVAL;
 
 	cotable_res = vmw_context_cotable(ctx_node->ctx, SVGA_COTABLE_DXQUERY);
+	if (IS_ERR_OR_NULL(cotable_res))
+		return cotable_res ? PTR_ERR(cotable_res) : -EINVAL;
 	ret = vmw_cotable_notify(cotable_res, cmd->body.queryId);
 
 	return ret;
@@ -1632,7 +1634,7 @@ static int vmw_cmd_tex_state(struct vmw_private *dev_priv,
 {
 	VMW_DECLARE_CMD_VAR(*cmd, SVGA3dCmdSetTextureState);
 	SVGA3dTextureState *last_state = (SVGA3dTextureState *)
-	  ((unsigned long) header + header->size + sizeof(header));
+	  ((unsigned long) header + header->size + sizeof(*header));
 	SVGA3dTextureState *cur_state = (SVGA3dTextureState *)
 		((unsigned long) header + sizeof(*cmd));
 	struct vmw_resource *ctx;
@@ -2003,7 +2005,7 @@ static int vmw_cmd_set_shader(struct vmw_private *dev_priv,
 
 	cmd = container_of(header, typeof(*cmd), header);
 
-	if (cmd->body.type >= SVGA3D_SHADERTYPE_PREDX_MAX) {
+	if (!vmw_shadertype_is_valid(VMW_SM_LEGACY, cmd->body.type)) {
 		VMW_DEBUG_USER("Illegal shader type %u.\n",
 			       (unsigned int) cmd->body.type);
 		return -EINVAL;
@@ -2125,8 +2127,6 @@ vmw_cmd_dx_set_single_constant_buffer(struct vmw_private *dev_priv,
 				      SVGA3dCmdHeader *header)
 {
 	VMW_DECLARE_CMD_VAR(*cmd, SVGA3dCmdDXSetSingleConstantBuffer);
-	SVGA3dShaderType max_shader_num = has_sm5_context(dev_priv) ?
-		SVGA3D_NUM_SHADERTYPE : SVGA3D_NUM_SHADERTYPE_DX10;
 
 	struct vmw_resource *res = NULL;
 	struct vmw_ctx_validation_info *ctx_node = VMW_GET_CTX_NODE(sw_context);
@@ -2143,6 +2143,14 @@ vmw_cmd_dx_set_single_constant_buffer(struct vmw_private *dev_priv,
 	if (unlikely(ret != 0))
 		return ret;
 
+	if (!vmw_shadertype_is_valid(dev_priv->sm_type, cmd->body.type) ||
+	    cmd->body.slot >= SVGA3D_DX_MAX_CONSTBUFFERS) {
+		VMW_DEBUG_USER("Illegal const buffer shader %u slot %u.\n",
+			       (unsigned int) cmd->body.type,
+			       (unsigned int) cmd->body.slot);
+		return -EINVAL;
+	}
+
 	binding.bi.ctx = ctx_node->ctx;
 	binding.bi.res = res;
 	binding.bi.bt = vmw_ctx_binding_cb;
@@ -2150,14 +2158,6 @@ vmw_cmd_dx_set_single_constant_buffer(struct vmw_private *dev_priv,
 	binding.offset = cmd->body.offsetInBytes;
 	binding.size = cmd->body.sizeInBytes;
 	binding.slot = cmd->body.slot;
-
-	if (binding.shader_slot >= max_shader_num ||
-	    binding.slot >= SVGA3D_DX_MAX_CONSTBUFFERS) {
-		VMW_DEBUG_USER("Illegal const buffer shader %u slot %u.\n",
-			       (unsigned int) cmd->body.type,
-			       (unsigned int) binding.slot);
-		return -EINVAL;
-	}
 
 	vmw_binding_add(ctx_node->staged, &binding.bi, binding.shader_slot,
 			binding.slot);
@@ -2179,15 +2179,13 @@ static int vmw_cmd_dx_set_shader_res(struct vmw_private *dev_priv,
 {
 	VMW_DECLARE_CMD_VAR(*cmd, SVGA3dCmdDXSetShaderResources) =
 		container_of(header, typeof(*cmd), header);
-	SVGA3dShaderType max_allowed = has_sm5_context(dev_priv) ?
-		SVGA3D_SHADERTYPE_MAX : SVGA3D_SHADERTYPE_DX10_MAX;
 
 	u32 num_sr_view = (cmd->header.size - sizeof(cmd->body)) /
 		sizeof(SVGA3dShaderResourceViewId);
 
 	if ((u64) cmd->body.startView + (u64) num_sr_view >
 	    (u64) SVGA3D_DX_MAX_SRVIEWS ||
-	    cmd->body.type >= max_allowed) {
+	    !vmw_shadertype_is_valid(dev_priv->sm_type, cmd->body.type)) {
 		VMW_DEBUG_USER("Invalid shader binding.\n");
 		return -EINVAL;
 	}
@@ -2211,8 +2209,6 @@ static int vmw_cmd_dx_set_shader(struct vmw_private *dev_priv,
 				 SVGA3dCmdHeader *header)
 {
 	VMW_DECLARE_CMD_VAR(*cmd, SVGA3dCmdDXSetShader);
-	SVGA3dShaderType max_allowed = has_sm5_context(dev_priv) ?
-		SVGA3D_SHADERTYPE_MAX : SVGA3D_SHADERTYPE_DX10_MAX;
 	struct vmw_resource *res = NULL;
 	struct vmw_ctx_validation_info *ctx_node = VMW_GET_CTX_NODE(sw_context);
 	struct vmw_ctx_bindinfo_shader binding;
@@ -2223,8 +2219,7 @@ static int vmw_cmd_dx_set_shader(struct vmw_private *dev_priv,
 
 	cmd = container_of(header, typeof(*cmd), header);
 
-	if (cmd->body.type >= max_allowed ||
-	    cmd->body.type < SVGA3D_SHADERTYPE_MIN) {
+	if (!vmw_shadertype_is_valid(dev_priv->sm_type, cmd->body.type)) {
 		VMW_DEBUG_USER("Illegal shader type %u.\n",
 			       (unsigned int) cmd->body.type);
 		return -EINVAL;
@@ -2462,6 +2457,8 @@ static int vmw_cmd_dx_view_define(struct vmw_private *dev_priv,
 		return ret;
 
 	res = vmw_context_cotable(ctx_node->ctx, vmw_view_cotables[view_type]);
+	if (IS_ERR_OR_NULL(res))
+		return res ? PTR_ERR(res) : -EINVAL;
 	ret = vmw_cotable_notify(res, cmd->defined_id);
 	if (unlikely(ret != 0))
 		return ret;
@@ -2547,8 +2544,8 @@ static int vmw_cmd_dx_so_define(struct vmw_private *dev_priv,
 
 	so_type = vmw_so_cmd_to_type(header->id);
 	res = vmw_context_cotable(ctx_node->ctx, vmw_so_cotables[so_type]);
-	if (IS_ERR(res))
-		return PTR_ERR(res);
+	if (IS_ERR_OR_NULL(res))
+		return res ? PTR_ERR(res) : -EINVAL;
 	cmd = container_of(header, typeof(*cmd), header);
 	ret = vmw_cotable_notify(res, cmd->defined_id);
 
@@ -2667,6 +2664,8 @@ static int vmw_cmd_dx_define_shader(struct vmw_private *dev_priv,
 		return -EINVAL;
 
 	res = vmw_context_cotable(ctx_node->ctx, SVGA_COTABLE_DXSHADER);
+	if (IS_ERR_OR_NULL(res))
+		return res ? PTR_ERR(res) : -EINVAL;
 	ret = vmw_cotable_notify(res, cmd->body.shaderId);
 	if (ret)
 		return ret;
@@ -2988,6 +2987,8 @@ static int vmw_cmd_dx_define_streamoutput(struct vmw_private *dev_priv,
 	}
 
 	res = vmw_context_cotable(ctx_node->ctx, SVGA_COTABLE_STREAMOUTPUT);
+	if (IS_ERR_OR_NULL(res))
+		return res ? PTR_ERR(res) : -EINVAL;
 	ret = vmw_cotable_notify(res, cmd->body.soid);
 	if (ret)
 		return ret;
@@ -3626,6 +3627,11 @@ static int vmw_cmd_check(struct vmw_private *dev_priv,
 
 
 	cmd_id = header->id;
+	if (header->size > SVGA_CMD_MAX_DATASIZE) {
+		VMW_DEBUG_USER("SVGA3D command: %d is too big.\n",
+			       cmd_id + SVGA_3D_CMD_BASE);
+		return -E2BIG;
+	}
 	*size = header->size + sizeof(SVGA3dCmdHeader);
 
 	cmd_id -= SVGA_3D_CMD_BASE;
@@ -3823,17 +3829,17 @@ int vmw_execbuf_fence_commands(struct drm_file *file_priv,
  * Also if copying fails, user-space will be unable to signal the fence object
  * so we wait for it immediately, and then unreference the user-space reference.
  */
-void
+int
 vmw_execbuf_copy_fence_user(struct vmw_private *dev_priv,
 			    struct vmw_fpriv *vmw_fp, int ret,
 			    struct drm_vmw_fence_rep __user *user_fence_rep,
 			    struct vmw_fence_obj *fence, uint32_t fence_handle,
-			    int32_t out_fence_fd, struct sync_file *sync_file)
+			    int32_t out_fence_fd)
 {
 	struct drm_vmw_fence_rep fence_rep;
 
 	if (user_fence_rep == NULL)
-		return;
+		return 0;
 
 	memset(&fence_rep, 0, sizeof(fence_rep));
 
@@ -3861,20 +3867,14 @@ vmw_execbuf_copy_fence_user(struct vmw_private *dev_priv,
 	 * handle.
 	 */
 	if (unlikely(ret != 0) && (fence_rep.error == 0)) {
-		if (sync_file)
-			fput(sync_file->file);
-
-		if (fence_rep.fd != -1) {
-			put_unused_fd(fence_rep.fd);
-			fence_rep.fd = -1;
-		}
-
 		ttm_ref_object_base_unref(vmw_fp->tfile, fence_handle,
 					  TTM_REF_USAGE);
 		VMW_DEBUG_USER("Fence copy error. Syncing.\n");
 		(void) vmw_fence_obj_wait(fence, false, false,
 					  VMW_FENCE_WAIT_TIMEOUT);
 	}
+
+	return ret ? -EFAULT : 0;
 }
 
 /**
@@ -4117,7 +4117,7 @@ int vmw_execbuf_process(struct drm_file *file_priv,
 		vmw_binding_state_reset(sw_context->staged_bindings);
 
 	if (!sw_context->res_ht_initialized) {
-		ret = drm_ht_create(&sw_context->res_ht, VMW_RES_HT_ORDER);
+		ret = vmwgfx_ht_create(&sw_context->res_ht, VMW_RES_HT_ORDER);
 		if (unlikely(ret != 0))
 			goto out_unlock;
 
@@ -4212,15 +4212,22 @@ int vmw_execbuf_process(struct drm_file *file_priv,
 
 			(void) vmw_fence_obj_wait(fence, false, false,
 						  VMW_FENCE_WAIT_TIMEOUT);
+		}
+	}
+
+	ret = vmw_execbuf_copy_fence_user(dev_priv, vmw_fpriv(file_priv), ret,
+				    user_fence_rep, fence, handle, out_fence_fd);
+
+	if (sync_file) {
+		if (ret) {
+			/* usercopy of fence failed, put the file object */
+			fput(sync_file->file);
+			put_unused_fd(out_fence_fd);
 		} else {
 			/* Link the fence with the FD created earlier */
 			fd_install(out_fence_fd, sync_file->file);
 		}
 	}
-
-	vmw_execbuf_copy_fence_user(dev_priv, vmw_fpriv(file_priv), ret,
-				    user_fence_rep, fence, handle, out_fence_fd,
-				    sync_file);
 
 	/* Don't unreference when handing fence out */
 	if (unlikely(out_fence != NULL)) {
@@ -4239,7 +4246,7 @@ int vmw_execbuf_process(struct drm_file *file_priv,
 	 */
 	vmw_validation_unref_lists(&val_ctx);
 
-	return 0;
+	return ret;
 
 out_unlock_binding:
 	mutex_unlock(&dev_priv->binding_mutex);

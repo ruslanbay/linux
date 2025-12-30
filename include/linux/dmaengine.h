@@ -944,10 +944,8 @@ struct dma_device {
 	void (*device_issue_pending)(struct dma_chan *chan);
 	void (*device_release)(struct dma_device *dev);
 	/* debugfs support */
-#ifdef CONFIG_DEBUG_FS
 	void (*dbg_summary_show)(struct seq_file *s, struct dma_device *dev);
 	struct dentry *dbg_dev_root;
-#endif
 };
 
 static inline int dmaengine_slave_config(struct dma_chan *chan,
@@ -961,7 +959,8 @@ static inline int dmaengine_slave_config(struct dma_chan *chan,
 
 static inline bool is_slave_direction(enum dma_transfer_direction direction)
 {
-	return (direction == DMA_MEM_TO_DEV) || (direction == DMA_DEV_TO_MEM);
+	return (direction == DMA_MEM_TO_DEV) || (direction == DMA_DEV_TO_MEM) ||
+	       (direction == DMA_DEV_TO_DEV);
 }
 
 static inline struct dma_async_tx_descriptor *dmaengine_prep_slave_single(

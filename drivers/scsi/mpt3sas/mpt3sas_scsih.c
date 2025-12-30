@@ -197,6 +197,14 @@ struct sense_info {
 #define MPT3SAS_PORT_ENABLE_COMPLETE (0xFFFD)
 #define MPT3SAS_ABRT_TASK_SET (0xFFFE)
 #define MPT3SAS_REMOVE_UNRESPONDING_DEVICES (0xFFFF)
+
+/*
+ * SAS Log info code for a NCQ collateral abort after an NCQ error:
+ * IOC_LOGINFO_PREFIX_PL | PL_LOGINFO_CODE_SATA_NCQ_FAIL_ALL_CMDS_AFTR_ERR
+ * See: drivers/message/fusion/lsi/mpi_log_sas.h
+ */
+#define IOC_LOGINFO_SATA_NCQ_FAIL_AFTER_ERR	0x31080000
+
 /**
  * struct fw_event_work - firmware event struct
  * @list: link list framework
@@ -3670,6 +3678,7 @@ static struct fw_event_work *dequeue_next_fw_event(struct MPT3SAS_ADAPTER *ioc)
 		fw_event = list_first_entry(&ioc->fw_event_list,
 				struct fw_event_work, list);
 		list_del_init(&fw_event->list);
+		fw_event_work_put(fw_event);
 	}
 	spin_unlock_irqrestore(&ioc->fw_event_lock, flags);
 
@@ -3751,7 +3760,6 @@ _scsih_fw_event_cleanup_queue(struct MPT3SAS_ADAPTER *ioc)
 		if (cancel_work_sync(&fw_event->work))
 			fw_event_work_put(fw_event);
 
-		fw_event_work_put(fw_event);
 	}
 	ioc->fw_events_cleanup = 0;
 }
@@ -3869,7 +3877,7 @@ _scsih_ublock_io_device(struct MPT3SAS_ADAPTER *ioc,
 
 	shost_for_each_device(sdev, ioc->shost) {
 		sas_device_priv_data = sdev->hostdata;
-		if (!sas_device_priv_data)
+		if (!sas_device_priv_data || !sas_device_priv_data->sas_target)
 			continue;
 		if (sas_device_priv_data->sas_target->sas_address
 		    != sas_address)
@@ -5812,6 +5820,17 @@ _scsih_io_done(struct MPT3SAS_ADAPTER *ioc, u16 smid, u8 msix_index, u32 reply)
 			scmd->result = DID_TRANSPORT_DISRUPTED << 16;
 			goto out;
 		}
+		if (log_info == IOC_LOGINFO_SATA_NCQ_FAIL_AFTER_ERR) {
+			/*
+			 * This is a ATA NCQ command aborted due to another NCQ
+			 * command failure. We must retry this command
+			 * immediately but without incrementing its retry
+			 * counter.
+			 */
+			WARN_ON_ONCE(xfer_cnt != 0);
+			scmd->result = DID_IMM_RETRY << 16;
+			break;
+		}
 		if (log_info == 0x31110630) {
 			if (scmd->retries > 2) {
 				scmd->result = DID_NO_CONNECT << 16;
@@ -6406,10 +6425,25 @@ _scsih_sas_port_refresh(struct MPT3SAS_ADAPTER *ioc)
 	int i, j, count = 0, lcount = 0;
 	int ret;
 	u64 sas_addr;
+	u8 num_phys;
 
 	drsprintk(ioc, ioc_info(ioc,
 	    "updating ports for sas_host(0x%016llx)\n",
 	    (unsigned long long)ioc->sas_hba.sas_address));
+
+	mpt3sas_config_get_number_hba_phys(ioc, &num_phys);
+	if (!num_phys) {
+		ioc_err(ioc, "failure at %s:%d/%s()!\n",
+		    __FILE__, __LINE__, __func__);
+		return;
+	}
+
+	if (num_phys > ioc->sas_hba.nr_phys_allocated) {
+		ioc_err(ioc, "failure at %s:%d/%s()!\n",
+		   __FILE__, __LINE__, __func__);
+		return;
+	}
+	ioc->sas_hba.num_phys = num_phys;
 
 	port_table = kcalloc(ioc->sas_hba.num_phys,
 	    sizeof(struct hba_port), GFP_KERNEL);
@@ -6611,6 +6645,30 @@ _scsih_sas_host_refresh(struct MPT3SAS_ADAPTER *ioc)
 			ioc->sas_hba.phy[i].hba_vphy = 1;
 		}
 
+		/*
+		 * Add new HBA phys to STL if these new phys got added as part
+		 * of HBA Firmware upgrade/downgrade operation.
+		 */
+		if (!ioc->sas_hba.phy[i].phy) {
+			if ((mpt3sas_config_get_phy_pg0(ioc, &mpi_reply,
+							&phy_pg0, i))) {
+				ioc_err(ioc, "failure at %s:%d/%s()!\n",
+					__FILE__, __LINE__, __func__);
+				continue;
+			}
+			ioc_status = le16_to_cpu(mpi_reply.IOCStatus) &
+				MPI2_IOCSTATUS_MASK;
+			if (ioc_status != MPI2_IOCSTATUS_SUCCESS) {
+				ioc_err(ioc, "failure at %s:%d/%s()!\n",
+					__FILE__, __LINE__, __func__);
+				continue;
+			}
+			ioc->sas_hba.phy[i].phy_id = i;
+			mpt3sas_transport_add_host_phy(ioc,
+				&ioc->sas_hba.phy[i], phy_pg0,
+				ioc->sas_hba.parent_dev);
+			continue;
+		}
 		ioc->sas_hba.phy[i].handle = ioc->sas_hba.handle;
 		attached_handle = le16_to_cpu(sas_iounit_pg0->PhyData[i].
 		    AttachedDevHandle);
@@ -6621,6 +6679,19 @@ _scsih_sas_host_refresh(struct MPT3SAS_ADAPTER *ioc)
 		mpt3sas_transport_update_links(ioc, ioc->sas_hba.sas_address,
 		    attached_handle, i, link_rate,
 		    ioc->sas_hba.phy[i].port);
+	}
+	/*
+	 * Clear the phy details if this phy got disabled as part of
+	 * HBA Firmware upgrade/downgrade operation.
+	 */
+	for (i = ioc->sas_hba.num_phys;
+	     i < ioc->sas_hba.nr_phys_allocated; i++) {
+		if (ioc->sas_hba.phy[i].phy &&
+		    ioc->sas_hba.phy[i].phy->negotiated_linkrate >=
+		    SAS_LINK_RATE_1_5_GBPS)
+			mpt3sas_transport_update_links(ioc,
+				ioc->sas_hba.sas_address, 0, i,
+				MPI2_SAS_NEG_LINK_RATE_PHY_DISABLED, NULL);
 	}
  out:
 	kfree(sas_iounit_pg0);
@@ -6654,7 +6725,10 @@ _scsih_sas_host_add(struct MPT3SAS_ADAPTER *ioc)
 			__FILE__, __LINE__, __func__);
 		return;
 	}
-	ioc->sas_hba.phy = kcalloc(num_phys,
+
+	ioc->sas_hba.nr_phys_allocated = max_t(u8,
+	    MPT_MAX_HBA_NUM_PHYS, num_phys);
+	ioc->sas_hba.phy = kcalloc(ioc->sas_hba.nr_phys_allocated,
 	    sizeof(struct _sas_phy), GFP_KERNEL);
 	if (!ioc->sas_hba.phy) {
 		ioc_err(ioc, "failure at %s:%d/%s()!\n",
@@ -10751,8 +10825,7 @@ _mpt3sas_fw_work(struct MPT3SAS_ADAPTER *ioc, struct fw_event_work *fw_event)
 		break;
 	case MPI2_EVENT_PCIE_TOPOLOGY_CHANGE_LIST:
 		_scsih_pcie_topology_change_event(ioc, fw_event);
-		ioc->current_event = NULL;
-		return;
+		break;
 	}
 out:
 	fw_event_work_put(fw_event);
@@ -10980,6 +11053,7 @@ _scsih_expander_node_remove(struct MPT3SAS_ADAPTER *ioc,
 {
 	struct _sas_port *mpt3sas_port, *next;
 	unsigned long flags;
+	int port_id;
 
 	/* remove sibling ports attached to this expander */
 	list_for_each_entry_safe(mpt3sas_port, next,
@@ -11000,6 +11074,8 @@ _scsih_expander_node_remove(struct MPT3SAS_ADAPTER *ioc,
 			    mpt3sas_port->hba_port);
 	}
 
+	port_id = sas_expander->port->port_id;
+
 	mpt3sas_transport_port_remove(ioc, sas_expander->sas_address,
 	    sas_expander->sas_address_parent, sas_expander->port);
 
@@ -11007,7 +11083,7 @@ _scsih_expander_node_remove(struct MPT3SAS_ADAPTER *ioc,
 	    "expander_remove: handle(0x%04x), sas_addr(0x%016llx), port:%d\n",
 	    sas_expander->handle, (unsigned long long)
 	    sas_expander->sas_address,
-	    sas_expander->port->port_id);
+	    port_id);
 
 	spin_lock_irqsave(&ioc->sas_node_lock, flags);
 	list_del(&sas_expander->list);
@@ -11328,6 +11404,7 @@ scsih_shutdown(struct pci_dev *pdev)
 	_scsih_ir_shutdown(ioc);
 	_scsih_nvme_shutdown(ioc);
 	mpt3sas_base_mask_interrupts(ioc);
+	mpt3sas_base_stop_watchdog(ioc);
 	ioc->shost_recovery = 1;
 	mpt3sas_base_make_ioc_ready(ioc, SOFT_RESET);
 	ioc->shost_recovery = 0;
@@ -12521,31 +12598,6 @@ scsih_pci_mmio_enabled(struct pci_dev *pdev)
 	return PCI_ERS_RESULT_RECOVERED;
 }
 
-/**
- * scsih_ncq_prio_supp - Check for NCQ command priority support
- * @sdev: scsi device struct
- *
- * This is called when a user indicates they would like to enable
- * ncq command priorities. This works only on SATA devices.
- */
-bool scsih_ncq_prio_supp(struct scsi_device *sdev)
-{
-	unsigned char *buf;
-	bool ncq_prio_supp = false;
-
-	if (!scsi_device_supports_vpd(sdev))
-		return ncq_prio_supp;
-
-	buf = kmalloc(SCSI_VPD_PG_LEN, GFP_KERNEL);
-	if (!buf)
-		return ncq_prio_supp;
-
-	if (!scsi_get_vpd_page(sdev, 0x89, buf, SCSI_VPD_PG_LEN))
-		ncq_prio_supp = (buf[213] >> 4) & 1;
-
-	kfree(buf);
-	return ncq_prio_supp;
-}
 /*
  * The pci device ids are defined in mpi/mpi2_cnfg.h.
  */
@@ -12840,8 +12892,10 @@ _mpt3sas_init(void)
 	mpt3sas_ctl_init(hbas_to_enumerate);
 
 	error = pci_register_driver(&mpt3sas_driver);
-	if (error)
+	if (error) {
+		mpt3sas_ctl_exit(hbas_to_enumerate);
 		scsih_exit();
+	}
 
 	return error;
 }

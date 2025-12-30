@@ -271,8 +271,8 @@ static inline int mlx5e_page_alloc_pool(struct mlx5e_rq *rq,
 	if (unlikely(!dma_info->page))
 		return -ENOMEM;
 
-	dma_info->addr = dma_map_page(rq->pdev, dma_info->page, 0,
-				      PAGE_SIZE, rq->buff.map_dir);
+	dma_info->addr = dma_map_page_attrs(rq->pdev, dma_info->page, 0, PAGE_SIZE,
+					    rq->buff.map_dir, DMA_ATTR_SKIP_CPU_SYNC);
 	if (unlikely(dma_mapping_error(rq->pdev, dma_info->addr))) {
 		page_pool_recycle_direct(rq->page_pool, dma_info->page);
 		dma_info->page = NULL;
@@ -293,7 +293,8 @@ static inline int mlx5e_page_alloc(struct mlx5e_rq *rq,
 
 void mlx5e_page_dma_unmap(struct mlx5e_rq *rq, struct mlx5e_dma_info *dma_info)
 {
-	dma_unmap_page(rq->pdev, dma_info->addr, PAGE_SIZE, rq->buff.map_dir);
+	dma_unmap_page_attrs(rq->pdev, dma_info->addr, PAGE_SIZE, rq->buff.map_dir,
+			     DMA_ATTR_SKIP_CPU_SYNC);
 }
 
 void mlx5e_page_release_dynamic(struct mlx5e_rq *rq,
@@ -787,8 +788,9 @@ static void mlx5e_lro_update_tcp_hdr(struct mlx5_cqe64 *cqe, struct tcphdr *tcp)
 	}
 }
 
-static void mlx5e_lro_update_hdr(struct sk_buff *skb, struct mlx5_cqe64 *cqe,
-				 u32 cqe_bcnt)
+static unsigned int mlx5e_lro_update_hdr(struct sk_buff *skb,
+					 struct mlx5_cqe64 *cqe,
+					 u32 cqe_bcnt)
 {
 	struct ethhdr	*eth = (struct ethhdr *)(skb->data);
 	struct tcphdr	*tcp;
@@ -839,6 +841,8 @@ static void mlx5e_lro_update_hdr(struct sk_buff *skb, struct mlx5_cqe64 *cqe,
 		tcp->check = csum_ipv6_magic(&ipv6->saddr, &ipv6->daddr, payload_len,
 					     IPPROTO_TCP, check);
 	}
+
+	return (unsigned int)((unsigned char *)tcp + tcp->doff * 4 - skb->data);
 }
 
 static inline void mlx5e_skb_set_hash(struct mlx5_cqe64 *cqe,
@@ -986,7 +990,8 @@ static inline void mlx5e_handle_csum(struct net_device *netdev,
 	}
 
 	/* True when explicitly set via priv flag, or XDP prog is loaded */
-	if (test_bit(MLX5E_RQ_STATE_NO_CSUM_COMPLETE, &rq->state))
+	if (test_bit(MLX5E_RQ_STATE_NO_CSUM_COMPLETE, &rq->state) ||
+	    get_cqe_tls_offload(cqe))
 		goto csum_unnecessary;
 
 	/* CQE csum doesn't cover padding octets in short ethernet
@@ -1053,8 +1058,10 @@ static inline void mlx5e_build_rx_skb(struct mlx5_cqe64 *cqe,
 		mlx5e_ipsec_offload_handle_rx_skb(netdev, skb, cqe);
 
 	if (lro_num_seg > 1) {
-		mlx5e_lro_update_hdr(skb, cqe, cqe_bcnt);
-		skb_shinfo(skb)->gso_size = DIV_ROUND_UP(cqe_bcnt, lro_num_seg);
+		unsigned int hdrlen = mlx5e_lro_update_hdr(skb, cqe, cqe_bcnt);
+
+		skb_shinfo(skb)->gso_size = DIV_ROUND_UP(cqe_bcnt - hdrlen, lro_num_seg);
+		skb_shinfo(skb)->gso_segs = lro_num_seg;
 		/* Subtract one since we already counted this as one
 		 * "regular" packet in mlx5e_complete_rx_cqe()
 		 */

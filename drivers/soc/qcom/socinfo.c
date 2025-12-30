@@ -87,8 +87,8 @@ static const char *const pmic_models[] = {
 	[15] = "PM8901",
 	[16] = "PM8950/PM8027",
 	[17] = "PMI8950/ISL9519",
-	[18] = "PM8921",
-	[19] = "PM8018",
+	[18] = "PMK8001/PM8921",
+	[19] = "PMI8996/PM8018",
 	[20] = "PM8998/PM8015",
 	[21] = "PMI8998/PM8014",
 	[22] = "PM8821",
@@ -614,10 +614,16 @@ static int qcom_socinfo_probe(struct platform_device *pdev)
 	qs->attr.revision = devm_kasprintf(&pdev->dev, GFP_KERNEL, "%u.%u",
 					   SOCINFO_MAJOR(le32_to_cpu(info->ver)),
 					   SOCINFO_MINOR(le32_to_cpu(info->ver)));
-	if (offsetof(struct socinfo, serial_num) <= item_size)
+	if (!qs->attr.soc_id || !qs->attr.revision)
+		return -ENOMEM;
+
+	if (offsetofend(struct socinfo, serial_num) <= item_size) {
 		qs->attr.serial_number = devm_kasprintf(&pdev->dev, GFP_KERNEL,
 							"%u",
 							le32_to_cpu(info->serial_num));
+		if (!qs->attr.serial_number)
+			return -ENOMEM;
+	}
 
 	qs->soc_dev = soc_device_register(&qs->attr);
 	if (IS_ERR(qs->soc_dev))

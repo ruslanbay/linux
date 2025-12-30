@@ -2907,6 +2907,7 @@ static int smu7_update_edc_leakage_table(struct pp_hwmgr *hwmgr)
 
 static int smu7_hwmgr_backend_init(struct pp_hwmgr *hwmgr)
 {
+	struct amdgpu_device *adev = hwmgr->adev;
 	struct smu7_hwmgr *data;
 	int result = 0;
 
@@ -2924,6 +2925,8 @@ static int smu7_hwmgr_backend_init(struct pp_hwmgr *hwmgr)
 		result = smu7_get_evv_voltages(hwmgr);
 		if (result) {
 			pr_info("Get EVV Voltage Failed.  Abort Driver loading!\n");
+			kfree(hwmgr->backend);
+			hwmgr->backend = NULL;
 			return -EINVAL;
 		}
 	} else {
@@ -2941,38 +2944,37 @@ static int smu7_hwmgr_backend_init(struct pp_hwmgr *hwmgr)
 	/* Initalize Dynamic State Adjustment Rule Settings */
 	result = phm_initializa_dynamic_state_adjustment_rule_settings(hwmgr);
 
-	if (0 == result) {
-		struct amdgpu_device *adev = hwmgr->adev;
+	if (result)
+		goto fail;
 
-		data->is_tlu_enabled = false;
+	data->is_tlu_enabled = false;
 
-		hwmgr->platform_descriptor.hardwareActivityPerformanceLevels =
+	hwmgr->platform_descriptor.hardwareActivityPerformanceLevels =
 							SMU7_MAX_HARDWARE_POWERLEVELS;
-		hwmgr->platform_descriptor.hardwarePerformanceLevels = 2;
-		hwmgr->platform_descriptor.minimumClocksReductionPercentage = 50;
+	hwmgr->platform_descriptor.hardwarePerformanceLevels = 2;
+	hwmgr->platform_descriptor.minimumClocksReductionPercentage = 50;
 
-		data->pcie_gen_cap = adev->pm.pcie_gen_mask;
-		if (data->pcie_gen_cap & CAIL_PCIE_LINK_SPEED_SUPPORT_GEN3)
-			data->pcie_spc_cap = 20;
-		else
-			data->pcie_spc_cap = 16;
-		data->pcie_lane_cap = adev->pm.pcie_mlw_mask;
+	data->pcie_gen_cap = adev->pm.pcie_gen_mask;
+	if (data->pcie_gen_cap & CAIL_PCIE_LINK_SPEED_SUPPORT_GEN3)
+		data->pcie_spc_cap = 20;
+	else
+		data->pcie_spc_cap = 16;
+	data->pcie_lane_cap = adev->pm.pcie_mlw_mask;
 
-		hwmgr->platform_descriptor.vbiosInterruptId = 0x20000400; /* IRQ_SOURCE1_SW_INT */
-/* The true clock step depends on the frequency, typically 4.5 or 9 MHz. Here we use 5. */
-		hwmgr->platform_descriptor.clockStep.engineClock = 500;
-		hwmgr->platform_descriptor.clockStep.memoryClock = 500;
-		smu7_thermal_parameter_init(hwmgr);
-	} else {
-		/* Ignore return value in here, we are cleaning up a mess. */
-		smu7_hwmgr_backend_fini(hwmgr);
-	}
+	hwmgr->platform_descriptor.vbiosInterruptId = 0x20000400; /* IRQ_SOURCE1_SW_INT */
+	/* The true clock step depends on the frequency, typically 4.5 or 9 MHz. Here we use 5. */
+	hwmgr->platform_descriptor.clockStep.engineClock = 500;
+	hwmgr->platform_descriptor.clockStep.memoryClock = 500;
+	smu7_thermal_parameter_init(hwmgr);
 
 	result = smu7_update_edc_leakage_table(hwmgr);
 	if (result)
-		return result;
+		goto fail;
 
 	return 0;
+fail:
+	smu7_hwmgr_backend_fini(hwmgr);
+	return result;
 }
 
 static int smu7_force_dpm_highest(struct pp_hwmgr *hwmgr)
@@ -3273,8 +3275,7 @@ static int smu7_apply_state_adjust_rules(struct pp_hwmgr *hwmgr,
 			const struct pp_power_state *current_ps)
 {
 	struct amdgpu_device *adev = hwmgr->adev;
-	struct smu7_power_state *smu7_ps =
-				cast_phw_smu7_power_state(&request_ps->hardware);
+	struct smu7_power_state *smu7_ps;
 	uint32_t sclk;
 	uint32_t mclk;
 	struct PP_Clocks minimum_clocks = {0};
@@ -3290,6 +3291,10 @@ static int smu7_apply_state_adjust_rules(struct pp_hwmgr *hwmgr,
 	int32_t stable_pstate_sclk = 0, stable_pstate_mclk = 0;
 	uint32_t latency;
 	bool latency_allowed = false;
+
+	smu7_ps = cast_phw_smu7_power_state(&request_ps->hardware);
+	if (!smu7_ps)
+		return -EINVAL;
 
 	data->battery_state = (PP_StateUILabel_Battery ==
 			request_ps->classification.ui_label);
@@ -4926,7 +4931,7 @@ static int smu7_print_clock_levels(struct pp_hwmgr *hwmgr,
 		now = i;
 
 		for (i = 0; i < sclk_table->count; i++)
-			size += sysfs_emit_at(buf, size, "%d: %uMhz %s\n",
+			size += sprintf(buf + size, "%d: %uMhz %s\n",
 					i, sclk_table->dpm_levels[i].value / 100,
 					(i == now) ? "*" : "");
 		break;
@@ -4941,7 +4946,7 @@ static int smu7_print_clock_levels(struct pp_hwmgr *hwmgr,
 		now = i;
 
 		for (i = 0; i < mclk_table->count; i++)
-			size += sysfs_emit_at(buf, size, "%d: %uMhz %s\n",
+			size += sprintf(buf + size, "%d: %uMhz %s\n",
 					i, mclk_table->dpm_levels[i].value / 100,
 					(i == now) ? "*" : "");
 		break;
@@ -4955,7 +4960,7 @@ static int smu7_print_clock_levels(struct pp_hwmgr *hwmgr,
 		now = i;
 
 		for (i = 0; i < pcie_table->count; i++)
-			size += sysfs_emit_at(buf, size, "%d: %s %s\n", i,
+			size += sprintf(buf + size, "%d: %s %s\n", i,
 					(pcie_table->dpm_levels[i].value == 0) ? "2.5GT/s, x8" :
 					(pcie_table->dpm_levels[i].value == 1) ? "5.0GT/s, x16" :
 					(pcie_table->dpm_levels[i].value == 2) ? "8.0GT/s, x16" : "",
@@ -4963,32 +4968,32 @@ static int smu7_print_clock_levels(struct pp_hwmgr *hwmgr,
 		break;
 	case OD_SCLK:
 		if (hwmgr->od_enabled) {
-			size = sysfs_emit(buf, "%s:\n", "OD_SCLK");
+			size += sprintf(buf + size, "%s:\n", "OD_SCLK");
 			for (i = 0; i < odn_sclk_table->num_of_pl; i++)
-				size += sysfs_emit_at(buf, size, "%d: %10uMHz %10umV\n",
+				size += sprintf(buf + size, "%d: %10uMHz %10umV\n",
 					i, odn_sclk_table->entries[i].clock/100,
 					odn_sclk_table->entries[i].vddc);
 		}
 		break;
 	case OD_MCLK:
 		if (hwmgr->od_enabled) {
-			size = sysfs_emit(buf, "%s:\n", "OD_MCLK");
+			size += sprintf(buf + size, "%s:\n", "OD_MCLK");
 			for (i = 0; i < odn_mclk_table->num_of_pl; i++)
-				size += sysfs_emit_at(buf, size, "%d: %10uMHz %10umV\n",
+				size += sprintf(buf + size, "%d: %10uMHz %10umV\n",
 					i, odn_mclk_table->entries[i].clock/100,
 					odn_mclk_table->entries[i].vddc);
 		}
 		break;
 	case OD_RANGE:
 		if (hwmgr->od_enabled) {
-			size = sysfs_emit(buf, "%s:\n", "OD_RANGE");
-			size += sysfs_emit_at(buf, size, "SCLK: %7uMHz %10uMHz\n",
+			size += sprintf(buf + size, "%s:\n", "OD_RANGE");
+			size += sprintf(buf + size, "SCLK: %7uMHz %10uMHz\n",
 				data->golden_dpm_table.sclk_table.dpm_levels[0].value/100,
 				hwmgr->platform_descriptor.overdriveLimit.engineClock/100);
-			size += sysfs_emit_at(buf, size, "MCLK: %7uMHz %10uMHz\n",
+			size += sprintf(buf + size, "MCLK: %7uMHz %10uMHz\n",
 				data->golden_dpm_table.mclk_table.dpm_levels[0].value/100,
 				hwmgr->platform_descriptor.overdriveLimit.memoryClock/100);
-			size += sysfs_emit_at(buf, size, "VDDC: %7umV %11umV\n",
+			size += sprintf(buf + size, "VDDC: %7umV %11umV\n",
 				data->odn_dpm_table.min_vddc,
 				data->odn_dpm_table.max_vddc);
 		}
@@ -5382,8 +5387,7 @@ static int smu7_get_thermal_temperature_range(struct pp_hwmgr *hwmgr,
 		thermal_data->max = table_info->cac_dtp_table->usSoftwareShutdownTemp *
 			PP_TEMPERATURE_UNITS_PER_CENTIGRADES;
 	else if (hwmgr->pp_table_version == PP_TABLE_V0)
-		thermal_data->max = data->thermal_temp_setting.temperature_shutdown *
-			PP_TEMPERATURE_UNITS_PER_CENTIGRADES;
+		thermal_data->max = data->thermal_temp_setting.temperature_shutdown;
 
 	return 0;
 }
@@ -5518,6 +5522,8 @@ static int smu7_get_power_profile_mode(struct pp_hwmgr *hwmgr, char *buf)
 	if (!buf)
 		return -EINVAL;
 
+	phm_get_sysfs_buf(&buf, &size);
+
 	size += sysfs_emit_at(buf, size, "%s %16s %16s %16s %16s %16s %16s %16s\n",
 			title[0], title[1], title[2], title[3],
 			title[4], title[5], title[6], title[7]);
@@ -5590,7 +5596,7 @@ static int smu7_set_power_profile_mode(struct pp_hwmgr *hwmgr, long *input, uint
 	mode = input[size];
 	switch (mode) {
 	case PP_SMC_POWER_PROFILE_CUSTOM:
-		if (size < 8 && size != 0)
+		if (size != 8 && size != 0)
 			return -EINVAL;
 		/* If only CUSTOM is passed in, use the saved values. Check
 		 * that we actually have a CUSTOM profile by ensuring that

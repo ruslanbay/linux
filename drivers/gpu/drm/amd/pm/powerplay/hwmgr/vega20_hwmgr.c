@@ -329,12 +329,12 @@ static int vega20_set_features_platform_caps(struct pp_hwmgr *hwmgr)
 	return 0;
 }
 
-static void vega20_init_dpm_defaults(struct pp_hwmgr *hwmgr)
+static int vega20_init_dpm_defaults(struct pp_hwmgr *hwmgr)
 {
 	struct vega20_hwmgr *data = (struct vega20_hwmgr *)(hwmgr->backend);
 	struct amdgpu_device *adev = hwmgr->adev;
 	uint32_t top32, bottom32;
-	int i;
+	int i, ret;
 
 	data->smu_features[GNLD_DPM_PREFETCHER].smu_feature_id =
 			FEATURE_DPM_PREFETCHER_BIT;
@@ -405,10 +405,17 @@ static void vega20_init_dpm_defaults(struct pp_hwmgr *hwmgr)
 	}
 
 	/* Get the SN to turn into a Unique ID */
-	smum_send_msg_to_smc(hwmgr, PPSMC_MSG_ReadSerialNumTop32, &top32);
-	smum_send_msg_to_smc(hwmgr, PPSMC_MSG_ReadSerialNumBottom32, &bottom32);
+	ret = smum_send_msg_to_smc(hwmgr, PPSMC_MSG_ReadSerialNumTop32, &top32);
+	if (ret)
+		return ret;
+
+	ret = smum_send_msg_to_smc(hwmgr, PPSMC_MSG_ReadSerialNumBottom32, &bottom32);
+	if (ret)
+		return ret;
 
 	adev->unique_id = ((uint64_t)bottom32 << 32) | top32;
+
+	return 0;
 }
 
 static int vega20_set_private_data_based_on_pptable(struct pp_hwmgr *hwmgr)
@@ -428,6 +435,7 @@ static int vega20_hwmgr_backend_init(struct pp_hwmgr *hwmgr)
 {
 	struct vega20_hwmgr *data;
 	struct amdgpu_device *adev = hwmgr->adev;
+	int result;
 
 	data = kzalloc(sizeof(struct vega20_hwmgr), GFP_KERNEL);
 	if (data == NULL)
@@ -453,8 +461,11 @@ static int vega20_hwmgr_backend_init(struct pp_hwmgr *hwmgr)
 
 	vega20_set_features_platform_caps(hwmgr);
 
-	vega20_init_dpm_defaults(hwmgr);
-
+	result = vega20_init_dpm_defaults(hwmgr);
+	if (result) {
+		pr_err("%s failed\n", __func__);
+		return result;
+	}
 	/* Parse pptable data read from VBIOS */
 	vega20_set_private_data_based_on_pptable(hwmgr);
 
@@ -2961,7 +2972,8 @@ static int vega20_odn_edit_dpm_table(struct pp_hwmgr *hwmgr,
 			data->od8_settings.od8_settings_array;
 	OverDriveTable_t *od_table =
 			&(data->smc_state_table.overdrive_table);
-	int32_t input_index, input_clk, input_vol, i;
+	int32_t input_clk, input_vol, i;
+	uint32_t input_index;
 	int od8_id;
 	int ret;
 
@@ -3238,6 +3250,8 @@ static int vega20_get_ppfeature_status(struct pp_hwmgr *hwmgr, char *buf)
 	int ret = 0;
 	int size = 0;
 
+	phm_get_sysfs_buf(&buf, &size);
+
 	ret = vega20_get_enabled_smc_features(hwmgr, &features_enabled);
 	PP_ASSERT_WITH_CODE(!ret,
 			"[EnableAllSmuFeatures] Failed to get enabled smc features!",
@@ -3372,13 +3386,13 @@ static int vega20_print_clock_levels(struct pp_hwmgr *hwmgr,
 				return ret);
 
 		if (vega20_get_sclks(hwmgr, &clocks)) {
-			size += sysfs_emit_at(buf, size, "0: %uMhz * (DPM disabled)\n",
+			size += sprintf(buf + size, "0: %uMhz * (DPM disabled)\n",
 				now / 100);
 			break;
 		}
 
 		for (i = 0; i < clocks.num_levels; i++)
-			size += sysfs_emit_at(buf, size, "%d: %uMhz %s\n",
+			size += sprintf(buf + size, "%d: %uMhz %s\n",
 				i, clocks.data[i].clocks_in_khz / 1000,
 				(clocks.data[i].clocks_in_khz == now * 10) ? "*" : "");
 		break;
@@ -3390,13 +3404,13 @@ static int vega20_print_clock_levels(struct pp_hwmgr *hwmgr,
 				return ret);
 
 		if (vega20_get_memclocks(hwmgr, &clocks)) {
-			size += sysfs_emit_at(buf, size, "0: %uMhz * (DPM disabled)\n",
+			size += sprintf(buf + size, "0: %uMhz * (DPM disabled)\n",
 				now / 100);
 			break;
 		}
 
 		for (i = 0; i < clocks.num_levels; i++)
-			size += sysfs_emit_at(buf, size, "%d: %uMhz %s\n",
+			size += sprintf(buf + size, "%d: %uMhz %s\n",
 				i, clocks.data[i].clocks_in_khz / 1000,
 				(clocks.data[i].clocks_in_khz == now * 10) ? "*" : "");
 		break;
@@ -3408,13 +3422,13 @@ static int vega20_print_clock_levels(struct pp_hwmgr *hwmgr,
 				return ret);
 
 		if (vega20_get_socclocks(hwmgr, &clocks)) {
-			size += sysfs_emit_at(buf, size, "0: %uMhz * (DPM disabled)\n",
+			size += sprintf(buf + size, "0: %uMhz * (DPM disabled)\n",
 				now / 100);
 			break;
 		}
 
 		for (i = 0; i < clocks.num_levels; i++)
-			size += sysfs_emit_at(buf, size, "%d: %uMhz %s\n",
+			size += sprintf(buf + size, "%d: %uMhz %s\n",
 				i, clocks.data[i].clocks_in_khz / 1000,
 				(clocks.data[i].clocks_in_khz == now * 10) ? "*" : "");
 		break;
@@ -3426,7 +3440,7 @@ static int vega20_print_clock_levels(struct pp_hwmgr *hwmgr,
 				return ret);
 
 		for (i = 0; i < fclk_dpm_table->count; i++)
-			size += sysfs_emit_at(buf, size, "%d: %uMhz %s\n",
+			size += sprintf(buf + size, "%d: %uMhz %s\n",
 				i, fclk_dpm_table->dpm_levels[i].value,
 				fclk_dpm_table->dpm_levels[i].value == (now / 100) ? "*" : "");
 		break;
@@ -3438,13 +3452,13 @@ static int vega20_print_clock_levels(struct pp_hwmgr *hwmgr,
 				return ret);
 
 		if (vega20_get_dcefclocks(hwmgr, &clocks)) {
-			size += sysfs_emit_at(buf, size, "0: %uMhz * (DPM disabled)\n",
+			size += sprintf(buf + size, "0: %uMhz * (DPM disabled)\n",
 				now / 100);
 			break;
 		}
 
 		for (i = 0; i < clocks.num_levels; i++)
-			size += sysfs_emit_at(buf, size, "%d: %uMhz %s\n",
+			size += sprintf(buf + size, "%d: %uMhz %s\n",
 				i, clocks.data[i].clocks_in_khz / 1000,
 				(clocks.data[i].clocks_in_khz == now * 10) ? "*" : "");
 		break;
@@ -3458,7 +3472,7 @@ static int vega20_print_clock_levels(struct pp_hwmgr *hwmgr,
 			gen_speed = pptable->PcieGenSpeed[i];
 			lane_width = pptable->PcieLaneCount[i];
 
-			size += sysfs_emit_at(buf, size, "%d: %s %s %dMhz %s\n", i,
+			size += sprintf(buf + size, "%d: %s %s %dMhz %s\n", i,
 					(gen_speed == 0) ? "2.5GT/s," :
 					(gen_speed == 1) ? "5.0GT/s," :
 					(gen_speed == 2) ? "8.0GT/s," :
@@ -3479,18 +3493,18 @@ static int vega20_print_clock_levels(struct pp_hwmgr *hwmgr,
 	case OD_SCLK:
 		if (od8_settings[OD8_SETTING_GFXCLK_FMIN].feature_id &&
 		    od8_settings[OD8_SETTING_GFXCLK_FMAX].feature_id) {
-			size = sysfs_emit(buf, "%s:\n", "OD_SCLK");
-			size += sysfs_emit_at(buf, size, "0: %10uMhz\n",
+			size += sprintf(buf + size, "%s:\n", "OD_SCLK");
+			size += sprintf(buf + size, "0: %10uMhz\n",
 				od_table->GfxclkFmin);
-			size += sysfs_emit_at(buf, size, "1: %10uMhz\n",
+			size += sprintf(buf + size, "1: %10uMhz\n",
 				od_table->GfxclkFmax);
 		}
 		break;
 
 	case OD_MCLK:
 		if (od8_settings[OD8_SETTING_UCLK_FMAX].feature_id) {
-			size = sysfs_emit(buf, "%s:\n", "OD_MCLK");
-			size += sysfs_emit_at(buf, size, "1: %10uMhz\n",
+			size += sprintf(buf + size, "%s:\n", "OD_MCLK");
+			size += sprintf(buf + size, "1: %10uMhz\n",
 				od_table->UclkFmax);
 		}
 
@@ -3503,14 +3517,14 @@ static int vega20_print_clock_levels(struct pp_hwmgr *hwmgr,
 		    od8_settings[OD8_SETTING_GFXCLK_VOLTAGE1].feature_id &&
 		    od8_settings[OD8_SETTING_GFXCLK_VOLTAGE2].feature_id &&
 		    od8_settings[OD8_SETTING_GFXCLK_VOLTAGE3].feature_id) {
-			size = sysfs_emit(buf, "%s:\n", "OD_VDDC_CURVE");
-			size += sysfs_emit_at(buf, size, "0: %10uMhz %10dmV\n",
+			size += sprintf(buf + size, "%s:\n", "OD_VDDC_CURVE");
+			size += sprintf(buf + size, "0: %10uMhz %10dmV\n",
 				od_table->GfxclkFreq1,
 				od_table->GfxclkVolt1 / VOLTAGE_SCALE);
-			size += sysfs_emit_at(buf, size, "1: %10uMhz %10dmV\n",
+			size += sprintf(buf + size, "1: %10uMhz %10dmV\n",
 				od_table->GfxclkFreq2,
 				od_table->GfxclkVolt2 / VOLTAGE_SCALE);
-			size += sysfs_emit_at(buf, size, "2: %10uMhz %10dmV\n",
+			size += sprintf(buf + size, "2: %10uMhz %10dmV\n",
 				od_table->GfxclkFreq3,
 				od_table->GfxclkVolt3 / VOLTAGE_SCALE);
 		}
@@ -3518,17 +3532,17 @@ static int vega20_print_clock_levels(struct pp_hwmgr *hwmgr,
 		break;
 
 	case OD_RANGE:
-		size = sysfs_emit(buf, "%s:\n", "OD_RANGE");
+		size += sprintf(buf + size, "%s:\n", "OD_RANGE");
 
 		if (od8_settings[OD8_SETTING_GFXCLK_FMIN].feature_id &&
 		    od8_settings[OD8_SETTING_GFXCLK_FMAX].feature_id) {
-			size += sysfs_emit_at(buf, size, "SCLK: %7uMhz %10uMhz\n",
+			size += sprintf(buf + size, "SCLK: %7uMhz %10uMhz\n",
 				od8_settings[OD8_SETTING_GFXCLK_FMIN].min_value,
 				od8_settings[OD8_SETTING_GFXCLK_FMAX].max_value);
 		}
 
 		if (od8_settings[OD8_SETTING_UCLK_FMAX].feature_id) {
-			size += sysfs_emit_at(buf, size, "MCLK: %7uMhz %10uMhz\n",
+			size += sprintf(buf + size, "MCLK: %7uMhz %10uMhz\n",
 				od8_settings[OD8_SETTING_UCLK_FMAX].min_value,
 				od8_settings[OD8_SETTING_UCLK_FMAX].max_value);
 		}
@@ -3539,22 +3553,22 @@ static int vega20_print_clock_levels(struct pp_hwmgr *hwmgr,
 		    od8_settings[OD8_SETTING_GFXCLK_VOLTAGE1].feature_id &&
 		    od8_settings[OD8_SETTING_GFXCLK_VOLTAGE2].feature_id &&
 		    od8_settings[OD8_SETTING_GFXCLK_VOLTAGE3].feature_id) {
-			size += sysfs_emit_at(buf, size, "VDDC_CURVE_SCLK[0]: %7uMhz %10uMhz\n",
+			size += sprintf(buf + size, "VDDC_CURVE_SCLK[0]: %7uMhz %10uMhz\n",
 				od8_settings[OD8_SETTING_GFXCLK_FREQ1].min_value,
 				od8_settings[OD8_SETTING_GFXCLK_FREQ1].max_value);
-			size += sysfs_emit_at(buf, size, "VDDC_CURVE_VOLT[0]: %7dmV %11dmV\n",
+			size += sprintf(buf + size, "VDDC_CURVE_VOLT[0]: %7dmV %11dmV\n",
 				od8_settings[OD8_SETTING_GFXCLK_VOLTAGE1].min_value,
 				od8_settings[OD8_SETTING_GFXCLK_VOLTAGE1].max_value);
-			size += sysfs_emit_at(buf, size, "VDDC_CURVE_SCLK[1]: %7uMhz %10uMhz\n",
+			size += sprintf(buf + size, "VDDC_CURVE_SCLK[1]: %7uMhz %10uMhz\n",
 				od8_settings[OD8_SETTING_GFXCLK_FREQ2].min_value,
 				od8_settings[OD8_SETTING_GFXCLK_FREQ2].max_value);
-			size += sysfs_emit_at(buf, size, "VDDC_CURVE_VOLT[1]: %7dmV %11dmV\n",
+			size += sprintf(buf + size, "VDDC_CURVE_VOLT[1]: %7dmV %11dmV\n",
 				od8_settings[OD8_SETTING_GFXCLK_VOLTAGE2].min_value,
 				od8_settings[OD8_SETTING_GFXCLK_VOLTAGE2].max_value);
-			size += sysfs_emit_at(buf, size, "VDDC_CURVE_SCLK[2]: %7uMhz %10uMhz\n",
+			size += sprintf(buf + size, "VDDC_CURVE_SCLK[2]: %7uMhz %10uMhz\n",
 				od8_settings[OD8_SETTING_GFXCLK_FREQ3].min_value,
 				od8_settings[OD8_SETTING_GFXCLK_FREQ3].max_value);
-			size += sysfs_emit_at(buf, size, "VDDC_CURVE_VOLT[2]: %7dmV %11dmV\n",
+			size += sprintf(buf + size, "VDDC_CURVE_VOLT[2]: %7dmV %11dmV\n",
 				od8_settings[OD8_SETTING_GFXCLK_VOLTAGE3].min_value,
 				od8_settings[OD8_SETTING_GFXCLK_VOLTAGE3].max_value);
 		}
@@ -4003,6 +4017,8 @@ static int vega20_get_power_profile_mode(struct pp_hwmgr *hwmgr, char *buf)
 	if (!buf)
 		return -EINVAL;
 
+	phm_get_sysfs_buf(&buf, &size);
+
 	size += sysfs_emit_at(buf, size, "%16s %s %s %s %s %s %s %s %s %s %s\n",
 			title[0], title[1], title[2], title[3], title[4], title[5],
 			title[6], title[7], title[8], title[9], title[10]);
@@ -4093,9 +4109,11 @@ static int vega20_set_power_profile_mode(struct pp_hwmgr *hwmgr, long *input, ui
 	if (power_profile_mode == PP_SMC_POWER_PROFILE_CUSTOM) {
 		struct vega20_hwmgr *data =
 			(struct vega20_hwmgr *)(hwmgr->backend);
-		if (size == 0 && !data->is_custom_profile_set)
+
+		if (size != 10 && size != 0)
 			return -EINVAL;
-		if (size < 10 && size != 0)
+
+		if (size == 0 && !data->is_custom_profile_set)
 			return -EINVAL;
 
 		result = vega20_get_activity_monitor_coeff(hwmgr,
@@ -4157,6 +4175,8 @@ static int vega20_set_power_profile_mode(struct pp_hwmgr *hwmgr, long *input, ui
 			activity_monitor.Fclk_PD_Data_error_coeff = input[8];
 			activity_monitor.Fclk_PD_Data_error_rate_coeff = input[9];
 			break;
+		default:
+			return -EINVAL;
 		}
 
 		result = vega20_set_activity_monitor_coeff(hwmgr,

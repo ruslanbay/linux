@@ -2375,15 +2375,6 @@ static int load_link_keys(struct sock *sk, struct hci_dev *hdev, void *data,
 	bt_dev_dbg(hdev, "debug_keys %u key_count %u", cp->debug_keys,
 		   key_count);
 
-	for (i = 0; i < key_count; i++) {
-		struct mgmt_link_key_info *key = &cp->keys[i];
-
-		if (key->addr.type != BDADDR_BREDR || key->type > 0x08)
-			return mgmt_cmd_status(sk, hdev->id,
-					       MGMT_OP_LOAD_LINK_KEYS,
-					       MGMT_STATUS_INVALID_PARAMS);
-	}
-
 	hci_dev_lock(hdev);
 
 	hci_link_keys_clear(hdev);
@@ -2405,6 +2396,19 @@ static int load_link_keys(struct sock *sk, struct hci_dev *hdev, void *data,
 				       key->val)) {
 			bt_dev_warn(hdev, "Skipping blocked link key for %pMR",
 				    &key->addr.bdaddr);
+			continue;
+		}
+
+		if (key->addr.type != BDADDR_BREDR) {
+			bt_dev_warn(hdev,
+				    "Invalid link address type %u for %pMR",
+				    key->addr.type, &key->addr.bdaddr);
+			continue;
+		}
+
+		if (key->type > 0x08) {
+			bt_dev_warn(hdev, "Invalid link key type %u for %pMR",
+				    key->type, &key->addr.bdaddr);
 			continue;
 		}
 
@@ -2966,6 +2970,10 @@ static int pair_device(struct sock *sk, struct hci_dev *hdev, void *data,
 		 * will be kept and this function does nothing.
 		 */
 		p = hci_conn_params_add(hdev, &cp->addr.bdaddr, addr_type);
+		if (!p) {
+			err = -EIO;
+			goto unlock;
+		}
 
 		if (p->auto_connect == HCI_AUTO_CONN_EXPLICIT)
 			p->auto_connect = HCI_AUTO_CONN_DISABLED;
@@ -3806,7 +3814,7 @@ static const u8 rpa_resolution_uuid[16] = {
 static int read_exp_features_info(struct sock *sk, struct hci_dev *hdev,
 				  void *data, u16 data_len)
 {
-	char buf[62];	/* Enough space for 3 features */
+	char buf[62];   /* Enough space for 3 features */
 	struct mgmt_rp_read_exp_features_info *rp = (void *)buf;
 	u16 idx = 0;
 	u32 flags;
@@ -3816,13 +3824,11 @@ static int read_exp_features_info(struct sock *sk, struct hci_dev *hdev,
 	memset(&buf, 0, sizeof(buf));
 
 #ifdef CONFIG_BT_FEATURE_DEBUG
-	if (!hdev) {
-		flags = bt_dbg_get() ? BIT(0) : 0;
+	flags = bt_dbg_get() ? BIT(0) : 0;
 
-		memcpy(rp->features[idx].uuid, debug_uuid, 16);
-		rp->features[idx].flags = cpu_to_le32(flags);
-		idx++;
-	}
+	memcpy(rp->features[idx].uuid, debug_uuid, 16);
+	rp->features[idx].flags = cpu_to_le32(flags);
+	idx++;
 #endif
 
 	if (hdev) {
@@ -3892,150 +3898,186 @@ static int exp_debug_feature_changed(bool enabled, struct sock *skip)
 }
 #endif
 
+#define EXP_FEAT(_uuid, _set_func)	\
+{					\
+	.uuid = _uuid,			\
+	.set_func = _set_func,		\
+}
+
+/* The zero key uuid is special. Multiple exp features are set through it. */
+static int set_zero_key_func(struct sock *sk, struct hci_dev *hdev,
+			     struct mgmt_cp_set_exp_feature *cp, u16 data_len)
+{
+	struct mgmt_rp_set_exp_feature rp;
+
+	memset(rp.uuid, 0, 16);
+	rp.flags = cpu_to_le32(0);
+
+#ifdef CONFIG_BT_FEATURE_DEBUG
+	if (!hdev) {
+		bool changed = bt_dbg_get();
+
+		bt_dbg_set(false);
+
+		if (changed)
+			exp_debug_feature_changed(false, sk);
+	}
+#endif
+
+	if (hdev && use_ll_privacy(hdev) && !hdev_is_powered(hdev)) {
+		bool changed;
+
+		changed = hci_dev_test_and_clear_flag(hdev,
+						      HCI_ENABLE_LL_PRIVACY);
+		if (changed)
+			exp_ll_privacy_feature_changed(false, hdev, sk);
+	}
+
+	hci_sock_set_flag(sk, HCI_MGMT_EXP_FEATURE_EVENTS);
+
+	return mgmt_cmd_complete(sk, hdev ? hdev->id : MGMT_INDEX_NONE,
+				 MGMT_OP_SET_EXP_FEATURE, 0,
+				 &rp, sizeof(rp));
+}
+
+#ifdef CONFIG_BT_FEATURE_DEBUG
+static int set_debug_func(struct sock *sk, struct hci_dev *hdev,
+			  struct mgmt_cp_set_exp_feature *cp, u16 data_len)
+{
+	struct mgmt_rp_set_exp_feature rp;
+
+	bool val, changed;
+	int err;
+
+	/* Command requires to use the non-controller index */
+	if (hdev)
+		return mgmt_cmd_status(sk, hdev->id,
+				       MGMT_OP_SET_EXP_FEATURE,
+				       MGMT_STATUS_INVALID_INDEX);
+
+	/* Parameters are limited to a single octet */
+	if (data_len != MGMT_SET_EXP_FEATURE_SIZE + 1)
+		return mgmt_cmd_status(sk, MGMT_INDEX_NONE,
+				       MGMT_OP_SET_EXP_FEATURE,
+				       MGMT_STATUS_INVALID_PARAMS);
+
+	/* Only boolean on/off is supported */
+	if (cp->param[0] != 0x00 && cp->param[0] != 0x01)
+		return mgmt_cmd_status(sk, MGMT_INDEX_NONE,
+				       MGMT_OP_SET_EXP_FEATURE,
+				       MGMT_STATUS_INVALID_PARAMS);
+
+	val = !!cp->param[0];
+	changed = val ? !bt_dbg_get() : bt_dbg_get();
+	bt_dbg_set(val);
+
+	memcpy(rp.uuid, debug_uuid, 16);
+	rp.flags = cpu_to_le32(val ? BIT(0) : 0);
+
+	hci_sock_set_flag(sk, HCI_MGMT_EXP_FEATURE_EVENTS);
+
+	err = mgmt_cmd_complete(sk, MGMT_INDEX_NONE,
+				MGMT_OP_SET_EXP_FEATURE, 0,
+				&rp, sizeof(rp));
+
+	if (changed)
+		exp_debug_feature_changed(val, sk);
+
+	return err;
+}
+#endif
+
+static int set_rpa_resolution_func(struct sock *sk, struct hci_dev *hdev,
+				   struct mgmt_cp_set_exp_feature *cp,
+				   u16 data_len)
+{
+	struct mgmt_rp_set_exp_feature rp;
+	bool val, changed;
+	int err;
+	u32 flags;
+
+	/* Command requires to use the controller index */
+	if (!hdev)
+		return mgmt_cmd_status(sk, MGMT_INDEX_NONE,
+				       MGMT_OP_SET_EXP_FEATURE,
+				       MGMT_STATUS_INVALID_INDEX);
+
+	/* Changes can only be made when controller is powered down */
+	if (hdev_is_powered(hdev))
+		return mgmt_cmd_status(sk, hdev->id,
+				       MGMT_OP_SET_EXP_FEATURE,
+				       MGMT_STATUS_REJECTED);
+
+	/* Parameters are limited to a single octet */
+	if (data_len != MGMT_SET_EXP_FEATURE_SIZE + 1)
+		return mgmt_cmd_status(sk, hdev->id,
+				       MGMT_OP_SET_EXP_FEATURE,
+				       MGMT_STATUS_INVALID_PARAMS);
+
+	/* Only boolean on/off is supported */
+	if (cp->param[0] != 0x00 && cp->param[0] != 0x01)
+		return mgmt_cmd_status(sk, hdev->id,
+				       MGMT_OP_SET_EXP_FEATURE,
+				       MGMT_STATUS_INVALID_PARAMS);
+
+	val = !!cp->param[0];
+
+	if (val) {
+		changed = !hci_dev_test_and_set_flag(hdev,
+						     HCI_ENABLE_LL_PRIVACY);
+		hci_dev_clear_flag(hdev, HCI_ADVERTISING);
+
+		/* Enable LL privacy + supported settings changed */
+		flags = BIT(0) | BIT(1);
+	} else {
+		changed = hci_dev_test_and_clear_flag(hdev,
+						      HCI_ENABLE_LL_PRIVACY);
+
+		/* Disable LL privacy + supported settings changed */
+		flags = BIT(1);
+	}
+
+	memcpy(rp.uuid, rpa_resolution_uuid, 16);
+	rp.flags = cpu_to_le32(flags);
+
+	hci_sock_set_flag(sk, HCI_MGMT_EXP_FEATURE_EVENTS);
+
+	err = mgmt_cmd_complete(sk, hdev->id,
+				MGMT_OP_SET_EXP_FEATURE, 0,
+				&rp, sizeof(rp));
+
+	if (changed)
+		exp_ll_privacy_feature_changed(val, hdev, sk);
+
+	return err;
+}
+
+static const struct mgmt_exp_feature {
+	const u8 *uuid;
+	int (*set_func)(struct sock *sk, struct hci_dev *hdev,
+			struct mgmt_cp_set_exp_feature *cp, u16 data_len);
+} exp_features[] = {
+	EXP_FEAT(ZERO_KEY, set_zero_key_func),
+#ifdef CONFIG_BT_FEATURE_DEBUG
+	EXP_FEAT(debug_uuid, set_debug_func),
+#endif
+	EXP_FEAT(rpa_resolution_uuid, set_rpa_resolution_func),
+
+	/* end with a null feature */
+	EXP_FEAT(NULL, NULL)
+};
+
 static int set_exp_feature(struct sock *sk, struct hci_dev *hdev,
 			   void *data, u16 data_len)
 {
 	struct mgmt_cp_set_exp_feature *cp = data;
-	struct mgmt_rp_set_exp_feature rp;
+	size_t i = 0;
 
 	bt_dev_dbg(hdev, "sock %p", sk);
 
-	if (!memcmp(cp->uuid, ZERO_KEY, 16)) {
-		memset(rp.uuid, 0, 16);
-		rp.flags = cpu_to_le32(0);
-
-#ifdef CONFIG_BT_FEATURE_DEBUG
-		if (!hdev) {
-			bool changed = bt_dbg_get();
-
-			bt_dbg_set(false);
-
-			if (changed)
-				exp_debug_feature_changed(false, sk);
-		}
-#endif
-
-		if (hdev && use_ll_privacy(hdev) && !hdev_is_powered(hdev)) {
-			bool changed = hci_dev_test_flag(hdev,
-							 HCI_ENABLE_LL_PRIVACY);
-
-			hci_dev_clear_flag(hdev, HCI_ENABLE_LL_PRIVACY);
-
-			if (changed)
-				exp_ll_privacy_feature_changed(false, hdev, sk);
-		}
-
-		hci_sock_set_flag(sk, HCI_MGMT_EXP_FEATURE_EVENTS);
-
-		return mgmt_cmd_complete(sk, hdev ? hdev->id : MGMT_INDEX_NONE,
-					 MGMT_OP_SET_EXP_FEATURE, 0,
-					 &rp, sizeof(rp));
-	}
-
-#ifdef CONFIG_BT_FEATURE_DEBUG
-	if (!memcmp(cp->uuid, debug_uuid, 16)) {
-		bool val, changed;
-		int err;
-
-		/* Command requires to use the non-controller index */
-		if (hdev)
-			return mgmt_cmd_status(sk, hdev->id,
-					       MGMT_OP_SET_EXP_FEATURE,
-					       MGMT_STATUS_INVALID_INDEX);
-
-		/* Parameters are limited to a single octet */
-		if (data_len != MGMT_SET_EXP_FEATURE_SIZE + 1)
-			return mgmt_cmd_status(sk, MGMT_INDEX_NONE,
-					       MGMT_OP_SET_EXP_FEATURE,
-					       MGMT_STATUS_INVALID_PARAMS);
-
-		/* Only boolean on/off is supported */
-		if (cp->param[0] != 0x00 && cp->param[0] != 0x01)
-			return mgmt_cmd_status(sk, MGMT_INDEX_NONE,
-					       MGMT_OP_SET_EXP_FEATURE,
-					       MGMT_STATUS_INVALID_PARAMS);
-
-		val = !!cp->param[0];
-		changed = val ? !bt_dbg_get() : bt_dbg_get();
-		bt_dbg_set(val);
-
-		memcpy(rp.uuid, debug_uuid, 16);
-		rp.flags = cpu_to_le32(val ? BIT(0) : 0);
-
-		hci_sock_set_flag(sk, HCI_MGMT_EXP_FEATURE_EVENTS);
-
-		err = mgmt_cmd_complete(sk, MGMT_INDEX_NONE,
-					MGMT_OP_SET_EXP_FEATURE, 0,
-					&rp, sizeof(rp));
-
-		if (changed)
-			exp_debug_feature_changed(val, sk);
-
-		return err;
-	}
-#endif
-
-	if (!memcmp(cp->uuid, rpa_resolution_uuid, 16)) {
-		bool val, changed;
-		int err;
-		u32 flags;
-
-		/* Command requires to use the controller index */
-		if (!hdev)
-			return mgmt_cmd_status(sk, MGMT_INDEX_NONE,
-					       MGMT_OP_SET_EXP_FEATURE,
-					       MGMT_STATUS_INVALID_INDEX);
-
-		/* Changes can only be made when controller is powered down */
-		if (hdev_is_powered(hdev))
-			return mgmt_cmd_status(sk, hdev->id,
-					       MGMT_OP_SET_EXP_FEATURE,
-					       MGMT_STATUS_REJECTED);
-
-		/* Parameters are limited to a single octet */
-		if (data_len != MGMT_SET_EXP_FEATURE_SIZE + 1)
-			return mgmt_cmd_status(sk, hdev->id,
-					       MGMT_OP_SET_EXP_FEATURE,
-					       MGMT_STATUS_INVALID_PARAMS);
-
-		/* Only boolean on/off is supported */
-		if (cp->param[0] != 0x00 && cp->param[0] != 0x01)
-			return mgmt_cmd_status(sk, hdev->id,
-					       MGMT_OP_SET_EXP_FEATURE,
-					       MGMT_STATUS_INVALID_PARAMS);
-
-		val = !!cp->param[0];
-
-		if (val) {
-			changed = !hci_dev_test_flag(hdev,
-						     HCI_ENABLE_LL_PRIVACY);
-			hci_dev_set_flag(hdev, HCI_ENABLE_LL_PRIVACY);
-			hci_dev_clear_flag(hdev, HCI_ADVERTISING);
-
-			/* Enable LL privacy + supported settings changed */
-			flags = BIT(0) | BIT(1);
-		} else {
-			changed = hci_dev_test_flag(hdev,
-						    HCI_ENABLE_LL_PRIVACY);
-			hci_dev_clear_flag(hdev, HCI_ENABLE_LL_PRIVACY);
-
-			/* Disable LL privacy + supported settings changed */
-			flags = BIT(1);
-		}
-
-		memcpy(rp.uuid, rpa_resolution_uuid, 16);
-		rp.flags = cpu_to_le32(flags);
-
-		hci_sock_set_flag(sk, HCI_MGMT_EXP_FEATURE_EVENTS);
-
-		err = mgmt_cmd_complete(sk, hdev->id,
-					MGMT_OP_SET_EXP_FEATURE, 0,
-					&rp, sizeof(rp));
-
-		if (changed)
-			exp_ll_privacy_feature_changed(val, hdev, sk);
-
-		return err;
+	for (i = 0; exp_features[i].uuid; i++) {
+		if (!memcmp(cp->uuid, exp_features[i].uuid, 16))
+			return exp_features[i].set_func(sk, hdev, cp, data_len);
 	}
 
 	return mgmt_cmd_status(sk, hdev ? hdev->id : MGMT_INDEX_NONE,
@@ -6219,15 +6261,6 @@ static int load_long_term_keys(struct sock *sk, struct hci_dev *hdev,
 
 	bt_dev_dbg(hdev, "key_count %u", key_count);
 
-	for (i = 0; i < key_count; i++) {
-		struct mgmt_ltk_info *key = &cp->keys[i];
-
-		if (!ltk_is_valid(key))
-			return mgmt_cmd_status(sk, hdev->id,
-					       MGMT_OP_LOAD_LONG_TERM_KEYS,
-					       MGMT_STATUS_INVALID_PARAMS);
-	}
-
 	hci_dev_lock(hdev);
 
 	hci_smp_ltks_clear(hdev);
@@ -6240,6 +6273,12 @@ static int load_long_term_keys(struct sock *sk, struct hci_dev *hdev,
 				       HCI_BLOCKED_KEY_TYPE_LTK,
 				       key->val)) {
 			bt_dev_warn(hdev, "Skipping blocked LTK for %pMR",
+				    &key->addr.bdaddr);
+			continue;
+		}
+
+		if (!ltk_is_valid(key)) {
+			bt_dev_warn(hdev, "Invalid LTK for %pMR",
 				    &key->addr.bdaddr);
 			continue;
 		}
@@ -7935,7 +7974,7 @@ static int add_ext_adv_params(struct sock *sk, struct hci_dev *hdev,
 	 * extra parameters we don't know about will be ignored in this request.
 	 */
 	if (data_len < MGMT_ADD_EXT_ADV_PARAMS_MIN_SIZE)
-		return mgmt_cmd_status(sk, hdev->id, MGMT_OP_ADD_ADVERTISING,
+		return mgmt_cmd_status(sk, hdev->id, MGMT_OP_ADD_EXT_ADV_PARAMS,
 				       MGMT_STATUS_INVALID_PARAMS);
 
 	flags = __le32_to_cpu(cp->flags);

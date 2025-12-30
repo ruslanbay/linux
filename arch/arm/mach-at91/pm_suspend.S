@@ -169,12 +169,23 @@ sr_ena_2:
 	cmp	tmp1, #UDDRC_STAT_SELFREF_TYPE_SW
 	bne	sr_ena_2
 
-	/* Put DDR PHY's DLL in bypass mode for non-backup modes. */
+	/* Disable DX DLLs for non-backup modes. */
 	cmp	r7, #AT91_PM_BACKUP
 	beq	sr_ena_3
-	ldr	tmp1, [r3, #DDR3PHY_PIR]
-	orr	tmp1, tmp1, #DDR3PHY_PIR_DLLBYP
-	str	tmp1, [r3, #DDR3PHY_PIR]
+
+	/* Do not soft reset the AC DLL. */
+	ldr	tmp1, [r3, DDR3PHY_ACDLLCR]
+	bic	tmp1, tmp1, DDR3PHY_ACDLLCR_DLLSRST
+	str	tmp1, [r3, DDR3PHY_ACDLLCR]
+
+	/* Disable DX DLLs. */
+	ldr	tmp1, [r3, #DDR3PHY_DX0DLLCR]
+	orr	tmp1, tmp1, #DDR3PHY_DXDLLCR_DLLDIS
+	str	tmp1, [r3, #DDR3PHY_DX0DLLCR]
+
+	ldr	tmp1, [r3, #DDR3PHY_DX1DLLCR]
+	orr	tmp1, tmp1, #DDR3PHY_DXDLLCR_DLLDIS
+	str	tmp1, [r3, #DDR3PHY_DX1DLLCR]
 
 sr_ena_3:
 	/* Power down DDR PHY data receivers. */
@@ -221,10 +232,14 @@ sr_ena_3:
 	bic	tmp1, tmp1, #DDR3PHY_DSGCR_ODTPDD_ODT0
 	str	tmp1, [r3, #DDR3PHY_DSGCR]
 
-	/* Take DDR PHY's DLL out of bypass mode. */
-	ldr	tmp1, [r3, #DDR3PHY_PIR]
-	bic	tmp1, tmp1, #DDR3PHY_PIR_DLLBYP
-	str	tmp1, [r3, #DDR3PHY_PIR]
+	/* Enable DX DLLs. */
+	ldr	tmp1, [r3, #DDR3PHY_DX0DLLCR]
+	bic	tmp1, tmp1, #DDR3PHY_DXDLLCR_DLLDIS
+	str	tmp1, [r3, #DDR3PHY_DX0DLLCR]
+
+	ldr	tmp1, [r3, #DDR3PHY_DX1DLLCR]
+	bic	tmp1, tmp1, #DDR3PHY_DXDLLCR_DLLDIS
+	str	tmp1, [r3, #DDR3PHY_DX1DLLCR]
 
 	/* Enable quasi-dynamic programming. */
 	mov	tmp1, #0
@@ -670,6 +685,10 @@ sr_dis_exit:
 	bic	tmp2, tmp2, #AT91_PMC_PLL_UPDT_ID
 	str	tmp2, [pmc, #AT91_PMC_PLL_UPDT]
 
+	/* save acr */
+	ldr	tmp2, [pmc, #AT91_PMC_PLL_ACR]
+	str	tmp2, .saved_acr
+
 	/* save div. */
 	mov	tmp1, #0
 	ldr	tmp2, [pmc, #AT91_PMC_PLL_CTRL0]
@@ -739,7 +758,7 @@ sr_dis_exit:
 	str	tmp1, [pmc, #AT91_PMC_PLL_UPDT]
 
 	/* step 2. */
-	ldr	tmp1, =AT91_PMC_PLL_ACR_DEFAULT_PLLA
+	ldr	tmp1, .saved_acr
 	str	tmp1, [pmc, #AT91_PMC_PLL_ACR]
 
 	/* step 3. */
@@ -853,7 +872,7 @@ e_done:
 /**
  * at91_mckx_ps_restore: restore MCK1..4 settings
  *
- * Side effects: overwrites tmp1, tmp2
+ * Side effects: overwrites tmp1, tmp2 and tmp3
  */
 .macro at91_mckx_ps_restore
 #ifdef CONFIG_SOC_SAMA7
@@ -897,7 +916,7 @@ r_ps:
 	bic	tmp3, tmp3, #AT91_PMC_MCR_V2_ID_MSK
 	orr	tmp3, tmp3, tmp1
 	orr	tmp3, tmp3, #AT91_PMC_MCR_V2_CMD
-	str	tmp2, [pmc, #AT91_PMC_MCR_V2]
+	str	tmp3, [pmc, #AT91_PMC_MCR_V2]
 
 	wait_mckrdy tmp1
 
@@ -1114,6 +1133,8 @@ ENDPROC(at91_pm_suspend_in_sram)
 .pmc_version:
 	.word 0
 .saved_mckr:
+	.word 0
+.saved_acr:
 	.word 0
 .saved_pllar:
 	.word 0

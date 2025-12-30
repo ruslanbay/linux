@@ -43,7 +43,7 @@
 #include <net/sock.h>
 #include <net/raw.h>
 
-#define TCPUDP_MIB_MAX max_t(u32, UDP_MIB_MAX, TCP_MIB_MAX)
+#define TCPUDP_MIB_MAX MAX_T(u32, UDP_MIB_MAX, TCP_MIB_MAX)
 
 /*
  *	Report socket allocation statistics [mea@utu.fi]
@@ -53,7 +53,7 @@ static int sockstat_seq_show(struct seq_file *seq, void *v)
 	struct net *net = seq->private;
 	int orphans, sockets;
 
-	orphans = percpu_counter_sum_positive(&tcp_orphan_count);
+	orphans = tcp_orphan_count_sum();
 	sockets = proto_sockets_allocated_sum_positive(&tcp_prot);
 
 	socket_seq_show(seq);
@@ -387,7 +387,7 @@ static int snmp_seq_show_ipstats(struct seq_file *seq, void *v)
 
 	seq_printf(seq, "\nIp: %d %d",
 		   IPV4_DEVCONF_ALL(net, FORWARDING) ? 1 : 2,
-		   net->ipv4.sysctl_ip_default_ttl);
+		   READ_ONCE(net->ipv4.sysctl_ip_default_ttl));
 
 	BUILD_BUG_ON(offsetof(struct ipstats_mib, mibs) != 0);
 	snmp_get_cpu_field64_batch(buff64, snmp4_ipstats_list,

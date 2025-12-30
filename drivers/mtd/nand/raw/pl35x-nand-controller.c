@@ -513,6 +513,7 @@ static int pl35x_nand_write_page_hwecc(struct nand_chip *chip,
 	u32 addr1 = 0, addr2 = 0, row;
 	u32 cmd_addr;
 	int i, ret;
+	u8 status;
 
 	ret = pl35x_smc_set_ecc_mode(nfc, chip, PL35X_SMC_ECC_CFG_MODE_APB);
 	if (ret)
@@ -564,6 +565,14 @@ static int pl35x_nand_write_page_hwecc(struct nand_chip *chip,
 	ret = pl35x_smc_wait_for_irq(nfc);
 	if (ret)
 		goto disable_ecc_engine;
+
+	/* Check write status on the chip side */
+	ret = nand_status_op(chip, &status);
+	if (ret)
+		goto disable_ecc_engine;
+
+	if (status & NAND_STATUS_FAIL)
+		ret = -EIO;
 
 disable_ecc_engine:
 	pl35x_smc_set_ecc_mode(nfc, chip, PL35X_SMC_ECC_CFG_MODE_BYPASS);
@@ -1062,7 +1071,7 @@ static int pl35x_nand_chip_init(struct pl35x_nandc *nfc,
 	chip->controller = &nfc->controller;
 	mtd = nand_to_mtd(chip);
 	mtd->dev.parent = nfc->dev;
-	nand_set_flash_node(chip, nfc->dev->of_node);
+	nand_set_flash_node(chip, np);
 	if (!mtd->name) {
 		mtd->name = devm_kasprintf(nfc->dev, GFP_KERNEL,
 					   "%s", PL35X_NANDC_DRIVER_NAME);

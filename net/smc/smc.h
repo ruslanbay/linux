@@ -129,6 +129,12 @@ enum smc_urg_state {
 	SMC_URG_READ	= 3,			/* data was already read */
 };
 
+struct smc_mark_woken {
+	bool woken;
+	void *key;
+	wait_queue_entry_t wait_entry;
+};
+
 struct smc_connection {
 	struct rb_node		alert_node;
 	struct smc_link_group	*lgr;		/* link group of connection */
@@ -170,6 +176,11 @@ struct smc_connection {
 	u16			tx_cdc_seq;	/* sequence # for CDC send */
 	u16			tx_cdc_seq_fin;	/* sequence # - tx completed */
 	spinlock_t		send_lock;	/* protect wr_sends */
+	atomic_t		cdc_pend_tx_wr; /* number of pending tx CDC wqe
+						 * - inc when post wqe,
+						 * - dec on polled tx cqe
+						 */
+	wait_queue_head_t	cdc_pend_tx_wq; /* wakeup on no cdc_pend_tx_wr*/
 	struct delayed_work	tx_work;	/* retry of smc_cdc_msg_send */
 	u32			tx_off;		/* base offset in peer rmb */
 
@@ -212,8 +223,14 @@ struct smc_connection {
 struct smc_sock {				/* smc sock container */
 	struct sock		sk;
 	struct socket		*clcsock;	/* internal tcp socket */
+	void			(*clcsk_state_change)(struct sock *sk);
+						/* original stat_change fct. */
 	void			(*clcsk_data_ready)(struct sock *sk);
-						/* original data_ready fct. **/
+						/* original data_ready fct. */
+	void			(*clcsk_write_space)(struct sock *sk);
+						/* original write_space fct. */
+	void			(*clcsk_error_report)(struct sock *sk);
+						/* original error_report fct. */
 	struct smc_connection	conn;		/* smc connection */
 	struct smc_sock		*listen_smc;	/* listen parent */
 	struct work_struct	connect_work;	/* handle non-blocking connect*/
@@ -224,6 +241,10 @@ struct smc_sock {				/* smc sock container */
 	bool			use_fallback;	/* fallback to tcp */
 	int			fallback_rsn;	/* reason for fallback */
 	u32			peer_diagnosis; /* decline reason from peer */
+	atomic_t                queued_smc_hs;  /* queued smc handshakes */
+	struct inet_connection_sock_af_ops		af_ops;
+	const struct inet_connection_sock_af_ops	*ori_af_ops;
+						/* original af ops */
 	int			sockopt_defer_accept;
 						/* sockopt TCP_DEFER_ACCEPT
 						 * value
@@ -246,6 +267,12 @@ struct smc_sock {				/* smc sock container */
 static inline struct smc_sock *smc_sk(const struct sock *sk)
 {
 	return (struct smc_sock *)sk;
+}
+
+static inline struct smc_sock *smc_clcsock_user_data(const struct sock *clcsk)
+{
+	return (struct smc_sock *)
+	       ((uintptr_t)clcsk->sk_user_data & ~SK_USER_DATA_NOCOPY);
 }
 
 extern struct workqueue_struct	*smc_hs_wq;	/* wq for handshake work */
@@ -291,5 +318,10 @@ static inline bool using_ipsec(struct smc_sock *smc)
 
 struct sock *smc_accept_dequeue(struct sock *parent, struct socket *new_sock);
 void smc_close_non_accepted(struct sock *sk);
+
+static inline void smc_sock_set_flag(struct sock *sk, enum sock_flags flag)
+{
+	set_bit(flag, &sk->sk_flags);
+}
 
 #endif	/* __SMC_H */

@@ -57,6 +57,7 @@
 #include <net/protocol.h>
 #include <net/raw.h>
 #include <net/rawv6.h>
+#include <net/seg6.h>
 #include <net/transp_v6.h>
 #include <net/ip6_route.h>
 #include <net/addrconf.h>
@@ -429,7 +430,10 @@ static struct net_device *icmp6_dev(const struct sk_buff *skb)
 	if (unlikely(dev->ifindex == LOOPBACK_IFINDEX || netif_is_l3_master(skb->dev))) {
 		const struct rt6_info *rt6 = skb_rt6_info(skb);
 
-		if (rt6)
+		/* The destination could be an external IP in Ext Hdr (SRv6, RPL, etc.),
+		 * and ip6_null_entry could be set to skb if no route is found.
+		 */
+		if (rt6 && rt6->rt6i_idev)
 			dev = rt6->rt6i_idev->dev;
 	}
 
@@ -820,6 +824,7 @@ out_bh_enable:
 
 void icmpv6_notify(struct sk_buff *skb, u8 type, u8 code, __be32 info)
 {
+	struct inet6_skb_parm *opt = IP6CB(skb);
 	const struct inet6_protocol *ipprot;
 	int inner_offset;
 	__be16 frag_off;
@@ -828,6 +833,8 @@ void icmpv6_notify(struct sk_buff *skb, u8 type, u8 code, __be32 info)
 
 	if (!pskb_may_pull(skb, sizeof(struct ipv6hdr)))
 		goto out;
+
+	seg6_icmp_srh(skb, opt);
 
 	nexthdr = ((struct ipv6hdr *)skb->data)->nexthdr;
 	if (ipv6_ext_hdr(nexthdr)) {
@@ -853,7 +860,7 @@ void icmpv6_notify(struct sk_buff *skb, u8 type, u8 code, __be32 info)
 
 	ipprot = rcu_dereference(inet6_protos[nexthdr]);
 	if (ipprot && ipprot->err_handler)
-		ipprot->err_handler(skb, NULL, type, code, inner_offset, info);
+		ipprot->err_handler(skb, opt, type, code, inner_offset, info);
 
 	raw6_icmp_error(skb, nexthdr, type, code, inner_offset, info);
 	return;
@@ -923,7 +930,7 @@ static int icmpv6_rcv(struct sk_buff *skb)
 		break;
 	case ICMPV6_EXT_ECHO_REQUEST:
 		if (!net->ipv6.sysctl.icmpv6_echo_ignore_all &&
-		    net->ipv4.sysctl_icmp_echo_enable_probe)
+		    READ_ONCE(net->ipv4.sysctl_icmp_echo_enable_probe))
 			icmpv6_echo_reply(skb);
 		break;
 

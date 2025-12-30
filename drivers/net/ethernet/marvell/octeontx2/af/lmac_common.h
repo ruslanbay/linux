@@ -76,6 +76,7 @@ struct mac_ops {
 	 */
 	int			(*get_nr_lmacs)(void *cgx);
 	u8                      (*get_lmac_type)(void *cgx, int lmac_id);
+	u32                     (*lmac_fifo_len)(void *cgx, int lmac_id);
 	int                     (*mac_lmac_intl_lbk)(void *cgx, int lmac_id,
 						     bool enable);
 	/* Register Stats related functions */
@@ -102,6 +103,14 @@ struct mac_ops {
 	void			(*mac_pause_frm_config)(void  *cgxd,
 							int lmac_id,
 							bool enable);
+
+	/* Enable/Disable Inbound PTP */
+	void			(*mac_enadis_ptp_config)(void  *cgxd,
+							 int lmac_id,
+							 bool enable);
+
+	int			(*mac_rx_tx_enable)(void *cgxd, int lmac_id, bool enable);
+	int			(*mac_tx_enable)(void *cgxd, int lmac_id, bool enable);
 };
 
 struct cgx {

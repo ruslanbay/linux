@@ -431,7 +431,7 @@ enum irdma_status_code irdma_sc_qp_create(struct irdma_sc_qp *qp, struct irdma_c
 
 	cqp = qp->dev->cqp;
 	if (qp->qp_uk.qp_id < cqp->dev->hw_attrs.min_hw_qp_id ||
-	    qp->qp_uk.qp_id > (cqp->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_QP].max_cnt - 1))
+	    qp->qp_uk.qp_id >= (cqp->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_QP].max_cnt))
 		return IRDMA_ERR_INVALID_QP_ID;
 
 	wqe = irdma_sc_cqp_get_next_send_wqe(cqp, scratch);
@@ -1043,6 +1043,9 @@ irdma_sc_alloc_stag(struct irdma_sc_dev *dev,
 	u64 hdr;
 	enum irdma_page_size page_size;
 
+	if (!info->total_len && !info->all_memory)
+		return -EINVAL;
+
 	if (info->page_size == 0x40000000)
 		page_size = IRDMA_PAGE_SIZE_1G;
 	else if (info->page_size == 0x200000)
@@ -1108,6 +1111,9 @@ irdma_sc_mr_reg_non_shared(struct irdma_sc_dev *dev,
 	bool remote_access;
 	u8 addr_type;
 	enum irdma_page_size page_size;
+
+	if (!info->total_len && !info->all_memory)
+		return -EINVAL;
 
 	if (info->page_size == 0x40000000)
 		page_size = IRDMA_PAGE_SIZE_1G;
@@ -2551,10 +2557,10 @@ static enum irdma_status_code irdma_sc_cq_create(struct irdma_sc_cq *cq,
 	enum irdma_status_code ret_code = 0;
 
 	cqp = cq->dev->cqp;
-	if (cq->cq_uk.cq_id > (cqp->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_CQ].max_cnt - 1))
+	if (cq->cq_uk.cq_id >= (cqp->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_CQ].max_cnt))
 		return IRDMA_ERR_INVALID_CQ_ID;
 
-	if (cq->ceq_id > (cq->dev->hmc_fpm_misc.max_ceqs - 1))
+	if (cq->ceq_id >= (cq->dev->hmc_fpm_misc.max_ceqs))
 		return IRDMA_ERR_INVALID_CEQ_ID;
 
 	ceq = cq->dev->ceq[cq->ceq_id];
@@ -2741,13 +2747,13 @@ irdma_sc_cq_modify(struct irdma_sc_cq *cq, struct irdma_modify_cq_info *info,
  */
 void irdma_check_cqp_progress(struct irdma_cqp_timeout *timeout, struct irdma_sc_dev *dev)
 {
-	if (timeout->compl_cqp_cmds != dev->cqp_cmd_stats[IRDMA_OP_CMPL_CMDS]) {
-		timeout->compl_cqp_cmds = dev->cqp_cmd_stats[IRDMA_OP_CMPL_CMDS];
+	u64 completed_ops = atomic64_read(&dev->cqp->completed_ops);
+
+	if (timeout->compl_cqp_cmds != completed_ops) {
+		timeout->compl_cqp_cmds = completed_ops;
 		timeout->count = 0;
-	} else {
-		if (dev->cqp_cmd_stats[IRDMA_OP_REQ_CMDS] !=
-		    timeout->compl_cqp_cmds)
-			timeout->count++;
+	} else if (timeout->compl_cqp_cmds != dev->cqp->requested_ops) {
+		timeout->count++;
 	}
 }
 
@@ -2790,7 +2796,7 @@ static enum irdma_status_code irdma_cqp_poll_registers(struct irdma_sc_cqp *cqp,
 		if (newtail != tail) {
 			/* SUCCESS */
 			IRDMA_RING_MOVE_TAIL(cqp->sq_ring);
-			cqp->dev->cqp_cmd_stats[IRDMA_OP_CMPL_CMDS]++;
+			atomic64_inc(&cqp->completed_ops);
 			return 0;
 		}
 		udelay(cqp->dev->hw_attrs.max_sleep_count);
@@ -3152,8 +3158,8 @@ enum irdma_status_code irdma_sc_cqp_init(struct irdma_sc_cqp *cqp,
 	info->dev->cqp = cqp;
 
 	IRDMA_RING_INIT(cqp->sq_ring, cqp->sq_size);
-	cqp->dev->cqp_cmd_stats[IRDMA_OP_REQ_CMDS] = 0;
-	cqp->dev->cqp_cmd_stats[IRDMA_OP_CMPL_CMDS] = 0;
+	cqp->requested_ops = 0;
+	atomic64_set(&cqp->completed_ops, 0);
 	/* for the cqp commands backlog. */
 	INIT_LIST_HEAD(&cqp->dev->cqp_cmd_head);
 
@@ -3306,7 +3312,7 @@ __le64 *irdma_sc_cqp_get_next_send_wqe_idx(struct irdma_sc_cqp *cqp, u64 scratch
 	if (ret_code)
 		return NULL;
 
-	cqp->dev->cqp_cmd_stats[IRDMA_OP_REQ_CMDS]++;
+	cqp->requested_ops++;
 	if (!*wqe_idx)
 		cqp->polarity = !cqp->polarity;
 	wqe = cqp->sq_base[*wqe_idx].elem;
@@ -3395,6 +3401,9 @@ enum irdma_status_code irdma_sc_ccq_get_cqe_info(struct irdma_sc_cq *ccq,
 	if (polarity != ccq->cq_uk.polarity)
 		return IRDMA_ERR_Q_EMPTY;
 
+	/* Ensure CEQE contents are read after valid bit is checked */
+	dma_rmb();
+
 	get_64bit_val(cqe, 8, &qp_ctx);
 	cqp = (struct irdma_sc_cqp *)(unsigned long)qp_ctx;
 	info->error = (bool)FIELD_GET(IRDMA_CQ_ERROR, temp);
@@ -3429,7 +3438,7 @@ enum irdma_status_code irdma_sc_ccq_get_cqe_info(struct irdma_sc_cq *ccq,
 	dma_wmb(); /* make sure shadow area is updated before moving tail */
 
 	IRDMA_RING_MOVE_TAIL(cqp->sq_ring);
-	ccq->dev->cqp_cmd_stats[IRDMA_OP_CMPL_CMDS]++;
+	atomic64_inc(&cqp->completed_ops);
 
 	return ret_code;
 }
@@ -3656,7 +3665,7 @@ enum irdma_status_code irdma_sc_ceq_init(struct irdma_sc_ceq *ceq,
 	    info->elem_cnt > info->dev->hw_attrs.max_hw_ceq_size)
 		return IRDMA_ERR_INVALID_SIZE;
 
-	if (info->ceq_id > (info->dev->hmc_fpm_misc.max_ceqs - 1))
+	if (info->ceq_id >= (info->dev->hmc_fpm_misc.max_ceqs))
 		return IRDMA_ERR_INVALID_CEQ_ID;
 	pble_obj_cnt = info->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_PBLE].cnt;
 
@@ -4046,12 +4055,16 @@ enum irdma_status_code irdma_sc_get_next_aeqe(struct irdma_sc_aeq *aeq,
 	u8 polarity;
 
 	aeqe = IRDMA_GET_CURRENT_AEQ_ELEM(aeq);
-	get_64bit_val(aeqe, 0, &compl_ctx);
 	get_64bit_val(aeqe, 8, &temp);
 	polarity = (u8)FIELD_GET(IRDMA_AEQE_VALID, temp);
 
 	if (aeq->polarity != polarity)
 		return IRDMA_ERR_Q_EMPTY;
+
+	/* Ensure AEQE contents are read after valid bit is checked */
+	dma_rmb();
+
+	get_64bit_val(aeqe, 0, &compl_ctx);
 
 	print_hex_dump_debug("WQE: AEQ_ENTRY WQE", DUMP_PREFIX_OFFSET, 16, 8,
 			     aeqe, 16, false);
@@ -4205,7 +4218,7 @@ enum irdma_status_code irdma_sc_ccq_init(struct irdma_sc_cq *cq,
 	    info->num_elem > info->dev->hw_attrs.uk_attrs.max_hw_cq_size)
 		return IRDMA_ERR_INVALID_SIZE;
 
-	if (info->ceq_id > (info->dev->hmc_fpm_misc.max_ceqs - 1))
+	if (info->ceq_id >= (info->dev->hmc_fpm_misc.max_ceqs ))
 		return IRDMA_ERR_INVALID_CEQ_ID;
 
 	pble_obj_cnt = info->dev->hmc_info->hmc_obj[IRDMA_HMC_IW_PBLE].cnt;

@@ -727,7 +727,9 @@ struct iwl_mvm_txq {
 	struct list_head list;
 	u16 txq_id;
 	atomic_t tx_request;
-	bool stopped;
+#define IWL_MVM_TXQ_STATE_STOP_FULL	0
+#define IWL_MVM_TXQ_STATE_STOP_REDIRECT	1
+	unsigned long state;
 };
 
 static inline struct iwl_mvm_txq *
@@ -1121,6 +1123,8 @@ struct iwl_mvm {
  * @IWL_MVM_STATUS_FIRMWARE_RUNNING: firmware is running
  * @IWL_MVM_STATUS_NEED_FLUSH_P2P: need to flush P2P bcast STA
  * @IWL_MVM_STATUS_IN_D3: in D3 (or at least about to go into it)
+ * @IWL_MVM_STATUS_STARTING: starting mac,
+ *	used to disable restart flow while in STARTING state
  */
 enum iwl_mvm_status {
 	IWL_MVM_STATUS_HW_RFKILL,
@@ -1132,6 +1136,7 @@ enum iwl_mvm_status {
 	IWL_MVM_STATUS_FIRMWARE_RUNNING,
 	IWL_MVM_STATUS_NEED_FLUSH_P2P,
 	IWL_MVM_STATUS_IN_D3,
+	IWL_MVM_STATUS_STARTING,
 };
 
 /* Keep track of completed init configuration */

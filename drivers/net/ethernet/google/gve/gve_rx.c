@@ -79,7 +79,8 @@ static int gve_rx_alloc_buffer(struct gve_priv *priv, struct device *dev,
 	dma_addr_t dma;
 	int err;
 
-	err = gve_alloc_page(priv, dev, &page, &dma, DMA_FROM_DEVICE);
+	err = gve_alloc_page(priv, dev, &page, &dma, DMA_FROM_DEVICE,
+			     GFP_ATOMIC);
 	if (err)
 		return err;
 
@@ -449,6 +450,7 @@ static bool gve_rx(struct gve_rx_ring *rx, struct gve_rx_desc *rx_desc,
 		skb_set_hash(skb, be32_to_cpu(rx_desc->rss_hash),
 			     gve_rss_type(rx_desc->flags_seq));
 
+	skb_record_rx_queue(skb, rx->q_num);
 	if (skb_is_nonlinear(skb))
 		napi_gro_frags(napi);
 	else
@@ -514,8 +516,13 @@ static bool gve_rx_refill_buffers(struct gve_priv *priv, struct gve_rx_ring *rx)
 
 				gve_rx_free_buffer(dev, page_info, data_slot);
 				page_info->page = NULL;
-				if (gve_rx_alloc_buffer(priv, dev, page_info, data_slot))
+				if (gve_rx_alloc_buffer(priv, dev, page_info,
+							data_slot)) {
+					u64_stats_update_begin(&rx->statss);
+					rx->rx_buf_alloc_fail++;
+					u64_stats_update_end(&rx->statss);
 					break;
+				}
 			}
 		}
 		fill_cnt++;
@@ -598,10 +605,6 @@ bool gve_rx_poll(struct gve_notify_block *block, int budget)
 	bool repoll = false;
 
 	feat = block->napi.dev->features;
-
-	/* If budget is 0, do all the work */
-	if (budget == 0)
-		budget = INT_MAX;
 
 	if (budget > 0)
 		repoll |= gve_clean_rx_done(rx, budget, feat);

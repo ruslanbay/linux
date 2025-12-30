@@ -80,7 +80,8 @@ static int ieee80211_set_mon_options(struct ieee80211_sub_if_data *sdata,
 	}
 
 	/* also validate MU-MIMO change */
-	monitor_sdata = rtnl_dereference(local->monitor_sdata);
+	monitor_sdata = wiphy_dereference(local->hw.wiphy,
+					  local->monitor_sdata);
 
 	if (!monitor_sdata &&
 	    (params->vht_mumimo_groups || params->vht_mumimo_follow_addr))
@@ -510,6 +511,9 @@ static int ieee80211_add_key(struct wiphy *wiphy, struct net_device *dev,
 		sta->cipher_scheme = cs;
 
 	err = ieee80211_key_link(key, sdata, sta);
+	/* KRACK protection, shouldn't happen but just silently accept key */
+	if (err == -EALREADY)
+		err = 0;
 
  out_unlock:
 	mutex_unlock(&local->sta_mtx);
@@ -810,7 +814,8 @@ static int ieee80211_set_monitor_channel(struct wiphy *wiphy,
 
 	mutex_lock(&local->mtx);
 	if (local->use_chanctx) {
-		sdata = rtnl_dereference(local->monitor_sdata);
+		sdata = wiphy_dereference(local->hw.wiphy,
+					  local->monitor_sdata);
 		if (sdata) {
 			ieee80211_vif_release_channel(sdata);
 			ret = ieee80211_vif_use_channel(sdata, chandef,
@@ -1224,7 +1229,10 @@ static int ieee80211_start_ap(struct wiphy *wiphy, struct net_device *dev,
 	return 0;
 
 error:
+	mutex_lock(&local->mtx);
 	ieee80211_vif_release_channel(sdata);
+	mutex_unlock(&local->mtx);
+
 	return err;
 }
 
@@ -1650,12 +1658,13 @@ static int sta_apply_parameters(struct ieee80211_local *local,
 			return ret;
 	}
 
-	if (params->supported_rates && params->supported_rates_len) {
-		ieee80211_parse_bitrates(&sdata->vif.bss_conf.chandef,
-					 sband, params->supported_rates,
-					 params->supported_rates_len,
-					 &sta->sta.supp_rates[sband->band]);
-	}
+	if (params->supported_rates &&
+	    params->supported_rates_len &&
+	    !ieee80211_parse_bitrates(&sdata->vif.bss_conf.chandef,
+				      sband, params->supported_rates,
+				      params->supported_rates_len,
+				      &sta->sta.supp_rates[sband->band]))
+		return -EINVAL;
 
 	if (params->ht_capa)
 		ieee80211_ht_cap_ie_to_sta_ht_cap(sdata, sband,
@@ -1840,15 +1849,14 @@ static int ieee80211_change_station(struct wiphy *wiphy,
 		}
 
 		if (sta->sdata->vif.type == NL80211_IFTYPE_AP_VLAN &&
-		    sta->sdata->u.vlan.sta) {
-			ieee80211_clear_fast_rx(sta);
+		    sta->sdata->u.vlan.sta)
 			RCU_INIT_POINTER(sta->sdata->u.vlan.sta, NULL);
-		}
 
 		if (test_sta_flag(sta, WLAN_STA_AUTHORIZED))
 			ieee80211_vif_dec_num_mcast(sta->sdata);
 
 		sta->sdata = vlansdata;
+		ieee80211_check_fast_rx(sta);
 		ieee80211_check_fast_xmit(sta);
 
 		if (test_sta_flag(sta, WLAN_STA_AUTHORIZED)) {
@@ -2105,14 +2113,12 @@ static int copy_mesh_setup(struct ieee80211_if_mesh *ifmsh,
 		const struct mesh_setup *setup)
 {
 	u8 *new_ie;
-	const u8 *old_ie;
 	struct ieee80211_sub_if_data *sdata = container_of(ifmsh,
 					struct ieee80211_sub_if_data, u.mesh);
 	int i;
 
 	/* allocate information elements */
 	new_ie = NULL;
-	old_ie = ifmsh->ie;
 
 	if (setup->ie_len) {
 		new_ie = kmemdup(setup->ie, setup->ie_len,
@@ -2122,7 +2128,6 @@ static int copy_mesh_setup(struct ieee80211_if_mesh *ifmsh,
 	}
 	ifmsh->ie_len = setup->ie_len;
 	ifmsh->ie = new_ie;
-	kfree(old_ie);
 
 	/* now copy the rest of the setup parameters */
 	ifmsh->mesh_id_len = setup->mesh_id_len;
@@ -2338,6 +2343,17 @@ static int ieee80211_change_bss(struct wiphy *wiphy,
 	if (!sband)
 		return -EINVAL;
 
+	if (params->basic_rates) {
+		if (!ieee80211_parse_bitrates(&sdata->vif.bss_conf.chandef,
+					      wiphy->bands[sband->band],
+					      params->basic_rates,
+					      params->basic_rates_len,
+					      &sdata->vif.bss_conf.basic_rates))
+			return -EINVAL;
+		changed |= BSS_CHANGED_BASIC_RATES;
+		ieee80211_check_rate_mask(sdata);
+	}
+
 	if (params->use_cts_prot >= 0) {
 		sdata->vif.bss_conf.use_cts_prot = params->use_cts_prot;
 		changed |= BSS_CHANGED_ERP_CTS_PROT;
@@ -2359,16 +2375,6 @@ static int ieee80211_change_bss(struct wiphy *wiphy,
 		sdata->vif.bss_conf.use_short_slot =
 			params->use_short_slot_time;
 		changed |= BSS_CHANGED_ERP_SLOT;
-	}
-
-	if (params->basic_rates) {
-		ieee80211_parse_bitrates(&sdata->vif.bss_conf.chandef,
-					 wiphy->bands[sband->band],
-					 params->basic_rates,
-					 params->basic_rates_len,
-					 &sdata->vif.bss_conf.basic_rates);
-		changed |= BSS_CHANGED_BASIC_RATES;
-		ieee80211_check_rate_mask(sdata);
 	}
 
 	if (params->ap_isolate >= 0) {
@@ -2669,7 +2675,8 @@ static int ieee80211_set_tx_power(struct wiphy *wiphy,
 		sdata = IEEE80211_WDEV_TO_SUB_IF(wdev);
 
 		if (sdata->vif.type == NL80211_IFTYPE_MONITOR) {
-			sdata = rtnl_dereference(local->monitor_sdata);
+			sdata = wiphy_dereference(local->hw.wiphy,
+						  local->monitor_sdata);
 			if (!sdata)
 				return -EOPNOTSUPP;
 		}
@@ -2729,7 +2736,8 @@ static int ieee80211_set_tx_power(struct wiphy *wiphy,
 	mutex_unlock(&local->iflist_mtx);
 
 	if (has_monitor) {
-		sdata = rtnl_dereference(local->monitor_sdata);
+		sdata = wiphy_dereference(local->hw.wiphy,
+					  local->monitor_sdata);
 		if (sdata) {
 			sdata->user_power_level = local->user_power_level;
 			if (txp_type != sdata->vif.bss_conf.txpower_type)
@@ -2750,13 +2758,18 @@ static int ieee80211_get_tx_power(struct wiphy *wiphy,
 	struct ieee80211_local *local = wiphy_priv(wiphy);
 	struct ieee80211_sub_if_data *sdata = IEEE80211_WDEV_TO_SUB_IF(wdev);
 
-	if (local->ops->get_txpower)
+	if (local->ops->get_txpower &&
+	    (sdata->flags & IEEE80211_SDATA_IN_DRIVER))
 		return drv_get_txpower(local, sdata, dbm);
 
 	if (!local->use_chanctx)
 		*dbm = local->hw.conf.power_level;
 	else
 		*dbm = sdata->vif.bss_conf.txpower;
+
+	/* INT_MIN indicates no power level was set yet */
+	if (*dbm == INT_MIN)
+		return -EINVAL;
 
 	return 0;
 }
@@ -3379,9 +3392,6 @@ static int ieee80211_set_csa_beacon(struct ieee80211_sub_if_data *sdata,
 #ifdef CONFIG_MAC80211_MESH
 	case NL80211_IFTYPE_MESH_POINT: {
 		struct ieee80211_if_mesh *ifmsh = &sdata->u.mesh;
-
-		if (params->chandef.width != sdata->vif.bss_conf.chandef.width)
-			return -EINVAL;
 
 		/* changes into another band are not supported */
 		if (sdata->vif.bss_conf.chandef.chan->band !=

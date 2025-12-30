@@ -311,27 +311,6 @@ Contact: Daniel Vetter, Noralf Tronnes
 
 Level: Advanced
 
-Garbage collect fbdev scrolling acceleration
---------------------------------------------
-
-Scroll acceleration is disabled in fbcon by hard-wiring p->scrollmode =
-SCROLL_REDRAW. There's a ton of code this will allow us to remove:
-
-- lots of code in fbcon.c
-
-- a bunch of the hooks in fbcon_ops, maybe the remaining hooks could be called
-  directly instead of the function table (with a switch on p->rotate)
-
-- fb_copyarea is unused after this, and can be deleted from all drivers
-
-Note that not all acceleration code can be deleted, since clearing and cursor
-support is still accelerated, which might be good candidates for further
-deletion projects.
-
-Contact: Daniel Vetter
-
-Level: Intermediate
-
 idr_init_base()
 ---------------
 
@@ -655,6 +634,17 @@ a bunch of progress cleaning it up but there's still plenty of work to be done.
 See drivers/gpu/drm/amd/display/TODO for tasks.
 
 Contact: Harry Wentland, Alex Deucher
+
+vmwgfx: Replace hashtable with Linux' implementation
+----------------------------------------------------
+
+The vmwgfx driver uses its own hashtable implementation. Replace the
+code with Linux' implementation and update the callers. It's mostly a
+refactoring task, but the interfaces are different.
+
+Contact: Zack Rusin, Thomas Zimmermann <tzimmermann@suse.de>
+
+Level: Intermediate
 
 Bootsplash
 ==========

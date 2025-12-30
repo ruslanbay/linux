@@ -143,10 +143,11 @@ const struct fs_parameter_spec smb3_fs_parameters[] = {
 	fsparam_u32("actimeo", Opt_actimeo),
 	fsparam_u32("acdirmax", Opt_acdirmax),
 	fsparam_u32("acregmax", Opt_acregmax),
+	fsparam_u32("closetimeo", Opt_closetimeo),
 	fsparam_u32("echo_interval", Opt_echo_interval),
 	fsparam_u32("max_credits", Opt_max_credits),
 	fsparam_u32("handletimeout", Opt_handletimeout),
-	fsparam_u32("snapshot", Opt_snapshot),
+	fsparam_u64("snapshot", Opt_snapshot),
 	fsparam_u32("max_channels", Opt_max_channels),
 
 	/* Mount options which take string value */
@@ -307,6 +308,7 @@ smb3_fs_context_dup(struct smb3_fs_context *new_ctx, struct smb3_fs_context *ctx
 	new_ctx->nodename = NULL;
 	new_ctx->username = NULL;
 	new_ctx->password = NULL;
+	new_ctx->server_hostname = NULL;
 	new_ctx->domainname = NULL;
 	new_ctx->UNC = NULL;
 	new_ctx->source = NULL;
@@ -318,6 +320,7 @@ smb3_fs_context_dup(struct smb3_fs_context *new_ctx, struct smb3_fs_context *ctx
 	DUP_CTX_STR(mount_options);
 	DUP_CTX_STR(username);
 	DUP_CTX_STR(password);
+	DUP_CTX_STR(server_hostname);
 	DUP_CTX_STR(UNC);
 	DUP_CTX_STR(source);
 	DUP_CTX_STR(domainname);
@@ -430,6 +433,43 @@ out:
 }
 
 /*
+ * Remove duplicate path delimiters. Windows is supposed to do that
+ * but there are some bugs that prevent rename from working if there are
+ * multiple delimiters.
+ *
+ * Returns a sanitized duplicate of @path. @gfp indicates the GFP_* flags
+ * for kstrdup.
+ * The caller is responsible for freeing the original.
+ */
+#define IS_DELIM(c) ((c) == '/' || (c) == '\\')
+char *cifs_sanitize_prepath(char *prepath, gfp_t gfp)
+{
+	char *cursor1 = prepath, *cursor2 = prepath;
+
+	/* skip all prepended delimiters */
+	while (IS_DELIM(*cursor1))
+		cursor1++;
+
+	/* copy the first letter */
+	*cursor2 = *cursor1;
+
+	/* copy the remainder... */
+	while (*(cursor1++)) {
+		/* ... skipping all duplicated delimiters */
+		if (IS_DELIM(*cursor1) && IS_DELIM(*cursor2))
+			continue;
+		*(++cursor2) = *cursor1;
+	}
+
+	/* if the last character is a delimiter, skip it */
+	if (IS_DELIM(*(cursor2 - 1)))
+		cursor2--;
+
+	*(cursor2) = '\0';
+	return kstrdup(prepath, gfp);
+}
+
+/*
  * Parse a devname into substrings and populate the ctx->UNC and ctx->prepath
  * fields with the result. Returns 0 on success and an error otherwise
  * (e.g. ENOMEM or EINVAL)
@@ -455,6 +495,12 @@ smb3_parse_devname(const char *devname, struct smb3_fs_context *ctx)
 	pos = strpbrk(devname + 2, delims);
 	if (!pos)
 		return -EINVAL;
+
+	/* record the server hostname */
+	kfree(ctx->server_hostname);
+	ctx->server_hostname = kstrndup(devname + 2, pos - devname - 2, GFP_KERNEL);
+	if (!ctx->server_hostname)
+		return -ENOMEM;
 
 	/* skip past delimiter */
 	++pos;
@@ -482,7 +528,7 @@ smb3_parse_devname(const char *devname, struct smb3_fs_context *ctx)
 	if (!*pos)
 		return 0;
 
-	ctx->prepath = kstrdup(pos, GFP_KERNEL);
+	ctx->prepath = cifs_sanitize_prepath(pos, GFP_KERNEL);
 	if (!ctx->prepath)
 		return -ENOMEM;
 
@@ -625,6 +671,16 @@ static int smb3_fs_context_validate(struct fs_context *fc)
 
 	/* set the port that we got earlier */
 	cifs_set_port((struct sockaddr *)&ctx->dstaddr, ctx->port);
+
+	if (ctx->uid_specified && !ctx->forceuid_specified) {
+		ctx->override_uid = 1;
+		pr_notice("enabling forceuid mount option implicitly because uid= option is specified\n");
+	}
+
+	if (ctx->gid_specified && !ctx->forcegid_specified) {
+		ctx->override_gid = 1;
+		pr_notice("enabling forcegid mount option implicitly because gid= option is specified\n");
+	}
 
 	if (ctx->override_uid && !ctx->uid_specified) {
 		ctx->override_uid = 0;
@@ -838,6 +894,14 @@ static int smb3_fs_context_parse_param(struct fs_context *fc,
 			ctx->sfu_remap = false; /* disable SFU mapping */
 		}
 		break;
+	case Opt_mapchars:
+		if (result.negated)
+			ctx->sfu_remap = false;
+		else {
+			ctx->sfu_remap = true;
+			ctx->remap = false; /* disable SFM (mapposix) mapping */
+		}
+		break;
 	case Opt_user_xattr:
 		if (result.negated)
 			ctx->no_xattr = 1;
@@ -849,12 +913,14 @@ static int smb3_fs_context_parse_param(struct fs_context *fc,
 			ctx->override_uid = 0;
 		else
 			ctx->override_uid = 1;
+		ctx->forceuid_specified = true;
 		break;
 	case Opt_forcegid:
 		if (result.negated)
 			ctx->override_gid = 0;
 		else
 			ctx->override_gid = 1;
+		ctx->forcegid_specified = true;
 		break;
 	case Opt_perm:
 		if (result.negated)
@@ -989,21 +1055,21 @@ static int smb3_fs_context_parse_param(struct fs_context *fc,
 		ctx->got_wsize = true;
 		break;
 	case Opt_acregmax:
-		ctx->acregmax = HZ * result.uint_32;
-		if (ctx->acregmax > CIFS_MAX_ACTIMEO) {
+		if (result.uint_32 > CIFS_MAX_ACTIMEO / HZ) {
 			cifs_errorf(fc, "acregmax too large\n");
 			goto cifs_parse_mount_err;
 		}
+		ctx->acregmax = HZ * result.uint_32;
 		break;
 	case Opt_acdirmax:
-		ctx->acdirmax = HZ * result.uint_32;
-		if (ctx->acdirmax > CIFS_MAX_ACTIMEO) {
+		if (result.uint_32 > CIFS_MAX_ACTIMEO / HZ) {
 			cifs_errorf(fc, "acdirmax too large\n");
 			goto cifs_parse_mount_err;
 		}
+		ctx->acdirmax = HZ * result.uint_32;
 		break;
 	case Opt_actimeo:
-		if (HZ * result.uint_32 > CIFS_MAX_ACTIMEO) {
+		if (result.uint_32 > CIFS_MAX_ACTIMEO / HZ) {
 			cifs_errorf(fc, "timeout too large\n");
 			goto cifs_parse_mount_err;
 		}
@@ -1014,11 +1080,23 @@ static int smb3_fs_context_parse_param(struct fs_context *fc,
 		}
 		ctx->acdirmax = ctx->acregmax = HZ * result.uint_32;
 		break;
+	case Opt_closetimeo:
+		if (result.uint_32 > SMB3_MAX_DCLOSETIMEO / HZ) {
+			cifs_errorf(fc, "closetimeo too large\n");
+			goto cifs_parse_mount_err;
+		}
+		ctx->closetimeo = HZ * result.uint_32;
+		break;
 	case Opt_echo_interval:
+		if (result.uint_32 < SMB_ECHO_INTERVAL_MIN ||
+		    result.uint_32 > SMB_ECHO_INTERVAL_MAX) {
+			cifs_errorf(fc, "echo interval is out of bounds\n");
+			goto cifs_parse_mount_err;
+		}
 		ctx->echo_interval = result.uint_32;
 		break;
 	case Opt_snapshot:
-		ctx->snapshot_time = result.uint_32;
+		ctx->snapshot_time = result.uint_64;
 		break;
 	case Opt_max_credits:
 		if (result.uint_32 < 20 || result.uint_32 > 60000) {
@@ -1452,6 +1530,7 @@ int smb3_init_fs_context(struct fs_context *fc)
 
 	ctx->acregmax = CIFS_DEF_ACTIMEO;
 	ctx->acdirmax = CIFS_DEF_ACTIMEO;
+	ctx->closetimeo = SMB3_DEF_DCLOSETIMEO;
 
 	/* Most clients set timeout to 0, allows server to use its default */
 	ctx->handle_timeout = 0; /* See MS-SMB2 spec section 2.2.14.2.12 */
@@ -1496,6 +1575,8 @@ smb3_cleanup_fs_context_contents(struct smb3_fs_context *ctx)
 	ctx->username = NULL;
 	kfree_sensitive(ctx->password);
 	ctx->password = NULL;
+	kfree(ctx->server_hostname);
+	ctx->server_hostname = NULL;
 	kfree(ctx->UNC);
 	ctx->UNC = NULL;
 	kfree(ctx->source);

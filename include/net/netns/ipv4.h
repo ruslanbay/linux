@@ -65,7 +65,7 @@ struct netns_ipv4 {
 	bool			fib_has_custom_local_routes;
 	bool			fib_offload_disabled;
 #ifdef CONFIG_IP_ROUTE_CLASSID
-	int			fib_num_tclassid_users;
+	atomic_t		fib_num_tclassid_users;
 #endif
 	struct hlist_head	*fib_table_hash;
 	struct sock		*fibnl;
@@ -74,7 +74,6 @@ struct netns_ipv4 {
 	struct sock		*mc_autojoin_sk;
 
 	struct inet_peer_base	*peers;
-	struct sock  * __percpu	*tcp_sk;
 	struct fqdir		*fqdir;
 
 	u8 sysctl_icmp_echo_ignore_all;
@@ -84,6 +83,9 @@ struct netns_ipv4 {
 	u8 sysctl_icmp_errors_use_inbound_ifaddr;
 	int sysctl_icmp_ratelimit;
 	int sysctl_icmp_ratemask;
+
+	u32 ip_rt_min_pmtu;
+	int ip_rt_mtu_expires;
 
 	struct local_ports ip_local_ports;
 

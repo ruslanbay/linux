@@ -192,7 +192,7 @@ static inline void release_thread(struct task_struct *tsk) { }
 void guarded_storage_release(struct task_struct *tsk);
 void gs_load_bc_cb(struct pt_regs *regs);
 
-unsigned long get_wchan(struct task_struct *p);
+unsigned long __get_wchan(struct task_struct *p);
 #define task_pt_regs(tsk) ((struct pt_regs *) \
         (task_stack_page(tsk) + THREAD_SIZE) - 1)
 #define KSTK_EIP(tsk)	(task_pt_regs(tsk)->psw.addr)
@@ -250,8 +250,8 @@ static inline void __load_psw(psw_t psw)
  */
 static __always_inline void __load_psw_mask(unsigned long mask)
 {
+	psw_t psw __uninitialized;
 	unsigned long addr;
-	psw_t psw;
 
 	psw.mask = mask;
 
@@ -318,14 +318,21 @@ extern void (*s390_base_pgm_handler_fn)(void);
 
 #define ARCH_LOW_ADDRESS_LIMIT	0x7fffffffUL
 
-extern int memcpy_real(void *, void *, size_t);
+extern int memcpy_real(void *, unsigned long, size_t);
 extern void memcpy_absolute(void *, void *, size_t);
 
-#define mem_assign_absolute(dest, val) do {			\
-	__typeof__(dest) __tmp = (val);				\
-								\
-	BUILD_BUG_ON(sizeof(__tmp) != sizeof(val));		\
-	memcpy_absolute(&(dest), &__tmp, sizeof(__tmp));	\
+#define put_abs_lowcore(member, x) do {					\
+	unsigned long __abs_address = offsetof(struct lowcore, member);	\
+	__typeof__(((struct lowcore *)0)->member) __tmp = (x);		\
+									\
+	memcpy_absolute(__va(__abs_address), &__tmp, sizeof(__tmp));	\
+} while (0)
+
+#define get_abs_lowcore(x, member) do {					\
+	unsigned long __abs_address = offsetof(struct lowcore, member);	\
+	__typeof__(((struct lowcore *)0)->member) *__ptr = &(x);	\
+									\
+	memcpy_absolute(__ptr, __va(__abs_address), sizeof(*__ptr));	\
 } while (0)
 
 extern int s390_isolate_bp(void);

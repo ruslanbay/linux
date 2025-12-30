@@ -209,7 +209,7 @@ static int xrx200_hw_receive(struct xrx200_chan *ch)
 	skb->protocol = eth_type_trans(skb, net_dev);
 	netif_receive_skb(skb);
 	net_dev->stats.rx_packets++;
-	net_dev->stats.rx_bytes += len - ETH_FCS_LEN;
+	net_dev->stats.rx_bytes += len;
 
 	return 0;
 }
@@ -474,7 +474,7 @@ static int xrx200_probe(struct platform_device *pdev)
 		return PTR_ERR(priv->clk);
 	}
 
-	err = of_get_mac_address(np, net_dev->dev_addr);
+	err = of_get_ethdev_address(np, net_dev);
 	if (err)
 		eth_hw_addr_random(net_dev);
 

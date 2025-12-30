@@ -46,6 +46,7 @@
 #include <linux/slab.h>
 #include <linux/font.h>
 #include <linux/crc32.h>
+#include <linux/fb.h>
 
 #include <asm/io.h>
 
@@ -271,7 +272,7 @@ static int sticon_font_set(struct vc_data *vc, struct console_font *font,
 	return sticon_set_font(vc, font);
 }
 
-static void sticon_init(struct vc_data *c, int init)
+static void sticon_init(struct vc_data *c, bool init)
 {
     struct sti_struct *sti = sticon_sti;
     int vc_cols, vc_rows;
@@ -298,19 +299,19 @@ static void sticon_deinit(struct vc_data *c)
 	sticon_set_def_font(i, NULL);
 }
 
-static void sticon_clear(struct vc_data *conp, int sy, int sx, int height,
-			 int width)
+static void sticon_clear(struct vc_data *conp, unsigned int sy, unsigned int sx,
+			 unsigned int width)
 {
-    if (!height || !width)
+    if (!width)
 	return;
 
-    sti_clear(sticon_sti, sy, sx, height, width,
+    sti_clear(sticon_sti, sy, sx, 1, width,
 	      conp->vc_video_erase_char, font_data[conp->vc_num]);
 }
 
-static int sticon_switch(struct vc_data *conp)
+static bool sticon_switch(struct vc_data *conp)
 {
-    return 1;	/* needs refreshing */
+    return true;	/* needs refreshing */
 }
 
 static int sticon_blank(struct vc_data *c, int blank, int mode_switch)
@@ -332,13 +333,13 @@ static u8 sticon_build_attr(struct vc_data *conp, u8 color,
 			    bool blink, bool underline, bool reverse,
 			    bool italic)
 {
-    u8 attr = ((color & 0x70) >> 1) | ((color & 7));
+	u8 fg = color & 7;
+	u8 bg = (color & 0x70) >> 4;
 
-    if (reverse) {
-	color = ((color >> 3) & 0x7) | ((color & 0x7) << 3);
-    }
-
-    return attr;
+	if (reverse)
+		return (fg << 3) | bg;
+	else
+		return (bg << 3) | fg;
 }
 
 static void sticon_invert_region(struct vc_data *conp, u16 *p, int count)
@@ -392,7 +393,9 @@ static int __init sticonsole_init(void)
     for (i = 0; i < MAX_NR_CONSOLES; i++)
 	font_data[i] = STI_DEF_FONT;
 
-    pr_info("sticon: Initializing STI text console.\n");
+    pr_info("sticon: Initializing STI text console on %s at [%s]\n",
+	sticon_sti->sti_data->inq_outptr.dev_name,
+	sticon_sti->pa_path);
     console_lock();
     err = do_take_over_console(&sti_con, 0, MAX_NR_CONSOLES - 1,
 		PAGE0->mem_cons.cl_class != CL_DUPLEX);

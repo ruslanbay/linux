@@ -60,7 +60,7 @@ static struct hns3_dbg_cmd_info hns3_dbg_cmd[] = {
 		.name = "tm_qset",
 		.cmd = HNAE3_DBG_CMD_TM_QSET,
 		.dentry = HNS3_DBG_DENTRY_TM,
-		.buf_len = HNS3_DBG_READ_LEN,
+		.buf_len = HNS3_DBG_READ_LEN_1MB,
 		.init = hns3_dbg_common_file_init,
 	},
 	{
@@ -123,7 +123,7 @@ static struct hns3_dbg_cmd_info hns3_dbg_cmd[] = {
 		.name = "tx_bd_queue",
 		.cmd = HNAE3_DBG_CMD_TX_BD,
 		.dentry = HNS3_DBG_DENTRY_TX_BD,
-		.buf_len = HNS3_DBG_READ_LEN_4MB,
+		.buf_len = HNS3_DBG_READ_LEN_5MB,
 		.init = hns3_dbg_bd_file_init,
 	},
 	{
@@ -924,6 +924,8 @@ hns3_dbg_dev_specs(struct hnae3_handle *h, char *buf, int len, int *pos)
 			  dev_specs->max_tm_rate);
 	*pos += scnprintf(buf + *pos, len - *pos, "MAX QSET number: %u\n",
 			  dev_specs->max_qset_num);
+	*pos += scnprintf(buf + *pos, len - *pos, "umv size: %u\n",
+			  dev_specs->umv_size);
 }
 
 static int hns3_dbg_dev_info(struct hnae3_handle *h, char *buf, int len)
@@ -1021,7 +1023,8 @@ static ssize_t hns3_dbg_read(struct file *filp, char __user *buffer,
 	if (ret)
 		return ret;
 
-	save_buf = &hns3_dbg_cmd[index].buf;
+	mutex_lock(&handle->dbgfs_lock);
+	save_buf = &handle->dbgfs_buf[index];
 
 	if (!test_bit(HNS3_NIC_STATE_INITED, &priv->state) ||
 	    test_bit(HNS3_NIC_STATE_RESETTING, &priv->state)) {
@@ -1033,15 +1036,15 @@ static ssize_t hns3_dbg_read(struct file *filp, char __user *buffer,
 		read_buf = *save_buf;
 	} else {
 		read_buf = kvzalloc(hns3_dbg_cmd[index].buf_len, GFP_KERNEL);
-		if (!read_buf)
-			return -ENOMEM;
+		if (!read_buf) {
+			ret = -ENOMEM;
+			goto out;
+		}
 
 		/* save the buffer addr until the last read operation */
 		*save_buf = read_buf;
-	}
 
-	/* get data ready for the first time to read */
-	if (!*ppos) {
+		/* get data ready for the first time to read */
 		ret = hns3_dbg_read_cmd(dbg_data, hns3_dbg_cmd[index].cmd,
 					read_buf, hns3_dbg_cmd[index].buf_len);
 		if (ret)
@@ -1050,8 +1053,10 @@ static ssize_t hns3_dbg_read(struct file *filp, char __user *buffer,
 
 	size = simple_read_from_buffer(buffer, count, ppos, read_buf,
 				       strlen(read_buf));
-	if (size > 0)
+	if (size > 0) {
+		mutex_unlock(&handle->dbgfs_lock);
 		return size;
+	}
 
 out:
 	/* free the buffer for the last read operation */
@@ -1060,6 +1065,7 @@ out:
 		*save_buf = NULL;
 	}
 
+	mutex_unlock(&handle->dbgfs_lock);
 	return ret;
 }
 
@@ -1123,6 +1129,13 @@ int hns3_dbg_init(struct hnae3_handle *handle)
 	int ret;
 	u32 i;
 
+	handle->dbgfs_buf = devm_kcalloc(&handle->pdev->dev,
+					 ARRAY_SIZE(hns3_dbg_cmd),
+					 sizeof(*handle->dbgfs_buf),
+					 GFP_KERNEL);
+	if (!handle->dbgfs_buf)
+		return -ENOMEM;
+
 	hns3_dbg_dentry[HNS3_DBG_DENTRY_COMMON].dentry =
 				debugfs_create_dir(name, hns3_dbgfs_root);
 	handle->hnae3_dbgfs = hns3_dbg_dentry[HNS3_DBG_DENTRY_COMMON].dentry;
@@ -1131,6 +1144,8 @@ int hns3_dbg_init(struct hnae3_handle *handle)
 		hns3_dbg_dentry[i].dentry =
 			debugfs_create_dir(hns3_dbg_dentry[i].name,
 					   handle->hnae3_dbgfs);
+
+	mutex_init(&handle->dbgfs_lock);
 
 	for (i = 0; i < ARRAY_SIZE(hns3_dbg_cmd); i++) {
 		if ((hns3_dbg_cmd[i].cmd == HNAE3_DBG_CMD_TM_NODES &&
@@ -1160,6 +1175,7 @@ int hns3_dbg_init(struct hnae3_handle *handle)
 out:
 	debugfs_remove_recursive(handle->hnae3_dbgfs);
 	handle->hnae3_dbgfs = NULL;
+	mutex_destroy(&handle->dbgfs_lock);
 	return ret;
 }
 
@@ -1167,14 +1183,16 @@ void hns3_dbg_uninit(struct hnae3_handle *handle)
 {
 	u32 i;
 
-	for (i = 0; i < ARRAY_SIZE(hns3_dbg_cmd); i++)
-		if (hns3_dbg_cmd[i].buf) {
-			kvfree(hns3_dbg_cmd[i].buf);
-			hns3_dbg_cmd[i].buf = NULL;
-		}
-
 	debugfs_remove_recursive(handle->hnae3_dbgfs);
 	handle->hnae3_dbgfs = NULL;
+
+	for (i = 0; i < ARRAY_SIZE(hns3_dbg_cmd); i++)
+		if (handle->dbgfs_buf[i]) {
+			kvfree(handle->dbgfs_buf[i]);
+			handle->dbgfs_buf[i] = NULL;
+		}
+
+	mutex_destroy(&handle->dbgfs_lock);
 }
 
 void hns3_dbg_register_debugfs(const char *debugfs_dir_name)

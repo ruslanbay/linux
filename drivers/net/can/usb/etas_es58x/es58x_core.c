@@ -7,14 +7,15 @@
  *
  * Copyright (c) 2019 Robert Bosch Engineering and Business Solutions. All rights reserved.
  * Copyright (c) 2020 ETAS K.K.. All rights reserved.
- * Copyright (c) 2020, 2021 Vincent Mailhol <mailhol.vincent@wanadoo.fr>
+ * Copyright (c) 2020-2025 Vincent Mailhol <mailhol@kernel.org>
  */
 
+#include <asm/unaligned.h>
+#include <linux/crc16.h>
+#include <linux/ethtool.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/usb.h>
-#include <linux/crc16.h>
-#include <asm/unaligned.h>
 
 #include "es58x_core.h"
 
@@ -664,7 +665,7 @@ int es58x_rx_err_msg(struct net_device *netdev, enum es58x_err error,
 	struct can_device_stats *can_stats = &can->can_stats;
 	struct can_frame *cf = NULL;
 	struct sk_buff *skb;
-	int ret;
+	int ret = 0;
 
 	if (!netif_running(netdev)) {
 		if (net_ratelimit())
@@ -823,8 +824,6 @@ int es58x_rx_err_msg(struct net_device *netdev, enum es58x_err error,
 			can->state = CAN_STATE_BUS_OFF;
 			can_bus_off(netdev);
 			ret = can->do_set_mode(netdev, CAN_MODE_STOP);
-			if (ret)
-				return ret;
 		}
 		break;
 
@@ -851,13 +850,6 @@ int es58x_rx_err_msg(struct net_device *netdev, enum es58x_err error,
 		break;
 	}
 
-	/* driver/net/can/dev.c:can_restart() takes in account error
-	 * messages in the RX stats. Doing the same here for
-	 * consistency.
-	 */
-	netdev->stats.rx_packets++;
-	netdev->stats.rx_bytes += CAN_ERR_DLC;
-
 	if (cf) {
 		if (cf->data[1])
 			cf->can_id |= CAN_ERR_CRTL;
@@ -881,7 +873,7 @@ int es58x_rx_err_msg(struct net_device *netdev, enum es58x_err error,
 					ES58X_EVENT_BUSOFF, timestamp);
 	}
 
-	return 0;
+	return ret;
 }
 
 /**
@@ -1796,7 +1788,7 @@ static int es58x_open(struct net_device *netdev)
 	struct es58x_device *es58x_dev = es58x_priv(netdev)->es58x_dev;
 	int ret;
 
-	if (atomic_inc_return(&es58x_dev->opened_channel_cnt) == 1) {
+	if (!es58x_dev->opened_channel_cnt) {
 		ret = es58x_alloc_rx_urbs(es58x_dev);
 		if (ret)
 			return ret;
@@ -1814,12 +1806,13 @@ static int es58x_open(struct net_device *netdev)
 	if (ret)
 		goto free_urbs;
 
+	es58x_dev->opened_channel_cnt++;
 	netif_start_queue(netdev);
 
 	return ret;
 
  free_urbs:
-	if (atomic_dec_and_test(&es58x_dev->opened_channel_cnt))
+	if (!es58x_dev->opened_channel_cnt)
 		es58x_free_urbs(es58x_dev);
 	netdev_err(netdev, "%s: Could not open the network device: %pe\n",
 		   __func__, ERR_PTR(ret));
@@ -1854,7 +1847,8 @@ static int es58x_stop(struct net_device *netdev)
 
 	es58x_flush_pending_tx_msg(netdev);
 
-	if (atomic_dec_and_test(&es58x_dev->opened_channel_cnt))
+	es58x_dev->opened_channel_cnt--;
+	if (!es58x_dev->opened_channel_cnt)
 		es58x_free_urbs(es58x_dev);
 
 	return 0;
@@ -1988,7 +1982,13 @@ static netdev_tx_t es58x_start_xmit(struct sk_buff *skb,
 static const struct net_device_ops es58x_netdev_ops = {
 	.ndo_open = es58x_open,
 	.ndo_stop = es58x_stop,
-	.ndo_start_xmit = es58x_start_xmit
+	.ndo_start_xmit = es58x_start_xmit,
+	.ndo_eth_ioctl = can_eth_ioctl_hwts,
+	.ndo_change_mtu = can_change_mtu,
+};
+
+static const struct ethtool_ops es58x_ethtool_ops = {
+	.get_ts_info = can_ethtool_op_get_ts_info_hwts,
 };
 
 /**
@@ -2095,11 +2095,15 @@ static int es58x_init_netdev(struct es58x_device *es58x_dev, int channel_idx)
 	es58x_init_priv(es58x_dev, es58x_priv(netdev), channel_idx);
 
 	netdev->netdev_ops = &es58x_netdev_ops;
+	netdev->ethtool_ops = &es58x_ethtool_ops;
 	netdev->flags |= IFF_ECHO;	/* We support local echo */
 
 	ret = register_candev(netdev);
-	if (ret)
+	if (ret) {
+		es58x_dev->netdev[channel_idx] = NULL;
+		free_candev(netdev);
 		return ret;
+	}
 
 	netdev_queue_set_dql_min_limit(netdev_get_tx_queue(netdev, 0),
 				       es58x_dev->param->dql_min_limit);
@@ -2223,7 +2227,6 @@ static struct es58x_device *es58x_init_es58x_dev(struct usb_interface *intf,
 	init_usb_anchor(&es58x_dev->tx_urbs_idle);
 	init_usb_anchor(&es58x_dev->tx_urbs_busy);
 	atomic_set(&es58x_dev->tx_urbs_idle_cnt, 0);
-	atomic_set(&es58x_dev->opened_channel_cnt, 0);
 	usb_set_intfdata(intf, es58x_dev);
 
 	es58x_dev->rx_pipe = usb_rcvbulkpipe(es58x_dev->udev,

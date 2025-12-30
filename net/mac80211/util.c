@@ -796,7 +796,7 @@ static void __iterate_interfaces(struct ieee80211_local *local,
 
 	sdata = rcu_dereference_check(local->monitor_sdata,
 				      lockdep_is_held(&local->iflist_mtx) ||
-				      lockdep_rtnl_is_held());
+				      lockdep_is_held(&local->hw.wiphy->mtx));
 	if (sdata &&
 	    (iter_flags & IEEE80211_IFACE_ITER_RESUME_ALL || !active_only ||
 	     sdata->flags & IEEE80211_SDATA_IN_DRIVER))
@@ -943,7 +943,12 @@ static void ieee80211_parse_extension_element(u32 *crc,
 					      struct ieee802_11_elems *elems)
 {
 	const void *data = elem->data + 1;
-	u8 len = elem->datalen - 1;
+	u8 len;
+
+	if (!elem->datalen)
+		return;
+
+	len = elem->datalen - 1;
 
 	switch (elem->data[0]) {
 	case WLAN_EID_EXT_HE_MU_EDCA:
@@ -1111,10 +1116,6 @@ _ieee802_11_parse_elems_crc(const u8 *start, size_t len, bool action,
 				elems->tim_len = elen;
 			} else
 				elem_parse_failed = true;
-			break;
-		case WLAN_EID_CHALLENGE:
-			elems->challenge = pos;
-			elems->challenge_len = elen;
 			break;
 		case WLAN_EID_VENDOR_SPECIFIC:
 			if (elen >= 4 && pos[0] == 0x00 && pos[1] == 0x50 &&
@@ -1395,8 +1396,8 @@ _ieee802_11_parse_elems_crc(const u8 *start, size_t len, bool action,
 
 static size_t ieee802_11_find_bssid_profile(const u8 *start, size_t len,
 					    struct ieee802_11_elems *elems,
-					    u8 *transmitter_bssid,
-					    u8 *bss_bssid,
+					    const u8 *transmitter_bssid,
+					    const u8 *bss_bssid,
 					    u8 *nontransmitted_profile)
 {
 	const struct element *elem, *sub;
@@ -1408,6 +1409,8 @@ static size_t ieee802_11_find_bssid_profile(const u8 *start, size_t len,
 
 	for_each_element_id(elem, WLAN_EID_MULTIPLE_BSSID, start, len) {
 		if (elem->datalen < 2)
+			continue;
+		if (elem->data[0] < 1 || elem->data[0] > 8)
 			continue;
 
 		for_each_element(sub, elem->data + 1, elem->datalen - 1) {
@@ -1461,31 +1464,36 @@ static size_t ieee802_11_find_bssid_profile(const u8 *start, size_t len,
 	return found ? profile_len : 0;
 }
 
-u32 ieee802_11_parse_elems_crc(const u8 *start, size_t len, bool action,
-			       struct ieee802_11_elems *elems,
-			       u64 filter, u32 crc, u8 *transmitter_bssid,
-			       u8 *bss_bssid)
+struct ieee802_11_elems *ieee802_11_parse_elems_crc(const u8 *start, size_t len,
+						    bool action, u64 filter,
+						    u32 crc,
+						    const u8 *transmitter_bssid,
+						    const u8 *bss_bssid)
 {
+	struct ieee802_11_elems *elems;
 	const struct element *non_inherit = NULL;
 	u8 *nontransmitted_profile;
 	int nontransmitted_profile_len = 0;
 
-	memset(elems, 0, sizeof(*elems));
+	elems = kzalloc(sizeof(*elems) + len, GFP_ATOMIC);
+	if (!elems)
+		return NULL;
 	elems->ie_start = start;
 	elems->total_len = len;
 
-	nontransmitted_profile = kmalloc(len, GFP_ATOMIC);
-	if (nontransmitted_profile) {
-		nontransmitted_profile_len =
-			ieee802_11_find_bssid_profile(start, len, elems,
-						      transmitter_bssid,
-						      bss_bssid,
-						      nontransmitted_profile);
-		non_inherit =
-			cfg80211_find_ext_elem(WLAN_EID_EXT_NON_INHERITANCE,
-					       nontransmitted_profile,
-					       nontransmitted_profile_len);
-	}
+	elems->scratch_len = len;
+	elems->scratch_pos = elems->scratch;
+
+	nontransmitted_profile = elems->scratch_pos;
+	nontransmitted_profile_len =
+		ieee802_11_find_bssid_profile(start, len, elems,
+					      transmitter_bssid,
+					      bss_bssid,
+					      nontransmitted_profile);
+	non_inherit =
+		cfg80211_find_ext_elem(WLAN_EID_EXT_NON_INHERITANCE,
+				       nontransmitted_profile,
+				       nontransmitted_profile_len);
 
 	crc = _ieee802_11_parse_elems_crc(start, len, action, elems, filter,
 					  crc, non_inherit);
@@ -1514,9 +1522,9 @@ u32 ieee802_11_parse_elems_crc(const u8 *start, size_t len, bool action,
 	    offsetofend(struct ieee80211_bssid_index, dtim_count))
 		elems->dtim_count = elems->bssid_index->dtim_count;
 
-	kfree(nontransmitted_profile);
+	elems->crc = crc;
 
-	return crc;
+	return elems;
 }
 
 void ieee80211_regulatory_limit_wmm_params(struct ieee80211_sub_if_data *sdata,
@@ -1954,7 +1962,7 @@ static int ieee80211_build_preq_ies_band(struct ieee80211_sub_if_data *sdata,
 	if (he_cap &&
 	    cfg80211_any_usable_channels(local->hw.wiphy, BIT(sband->band),
 					 IEEE80211_CHAN_NO_HE)) {
-		pos = ieee80211_ie_build_he_cap(pos, he_cap, end);
+		pos = ieee80211_ie_build_he_cap(0, pos, he_cap, end);
 		if (!pos)
 			goto out_err;
 	}
@@ -2138,6 +2146,10 @@ u32 ieee80211_sta_get_rates(struct ieee80211_sub_if_data *sdata,
 
 void ieee80211_stop_device(struct ieee80211_local *local)
 {
+	local_bh_disable();
+	ieee80211_handle_queued_frames(local);
+	local_bh_enable();
+
 	ieee80211_led_radio(local, false);
 	ieee80211_mod_tpt_led_trig(local, 0, IEEE80211_TPT_LEDTRIG_FL_RADIO);
 
@@ -2301,6 +2313,7 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 	struct cfg80211_sched_scan_request *sched_scan_req;
 	bool sched_scan_stopped = false;
 	bool suspended = local->suspended;
+	bool in_reconfig = false;
 
 	/* nothing to do if HW shouldn't run */
 	if (!local->open_count)
@@ -2361,6 +2374,9 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 			WARN(1, "Hardware became unavailable upon resume. This could be a software issue prior to suspend or a hardware issue.\n");
 		else
 			WARN(1, "Hardware became unavailable during restart.\n");
+		ieee80211_wake_queues_by_reason(hw, IEEE80211_MAX_QUEUE_MAP,
+						IEEE80211_QUEUE_STOP_REASON_SUSPEND,
+						false);
 		ieee80211_handle_reconfig_failure(local);
 		return res;
 	}
@@ -2379,7 +2395,7 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 				   IEEE80211_TPT_LEDTRIG_FL_RADIO, 0);
 
 	/* add interfaces */
-	sdata = rtnl_dereference(local->monitor_sdata);
+	sdata = wiphy_dereference(local->hw.wiphy, local->monitor_sdata);
 	if (sdata) {
 		/* in HW restart it exists already */
 		WARN_ON(local->resuming);
@@ -2424,7 +2440,8 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 				WARN_ON(drv_add_chanctx(local, ctx));
 		mutex_unlock(&local->chanctx_mtx);
 
-		sdata = rtnl_dereference(local->monitor_sdata);
+		sdata = wiphy_dereference(local->hw.wiphy,
+					  local->monitor_sdata);
 		if (sdata && ieee80211_sdata_running(sdata))
 			ieee80211_assign_chanctx(local, sdata);
 	}
@@ -2643,7 +2660,15 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 		mutex_unlock(&local->sta_mtx);
 	}
 
+	/*
+	 * If this is for hw restart things are still running.
+	 * We may want to change that later, however.
+	 */
+	if (local->open_count && (!suspended || reconfig_due_to_wowlan))
+		drv_reconfig_complete(local, IEEE80211_RECONFIG_TYPE_RESTART);
+
 	if (local->in_reconfig) {
+		in_reconfig = local->in_reconfig;
 		local->in_reconfig = false;
 		barrier();
 
@@ -2661,12 +2686,14 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 					IEEE80211_QUEUE_STOP_REASON_SUSPEND,
 					false);
 
-	/*
-	 * If this is for hw restart things are still running.
-	 * We may want to change that later, however.
-	 */
-	if (local->open_count && (!suspended || reconfig_due_to_wowlan))
-		drv_reconfig_complete(local, IEEE80211_RECONFIG_TYPE_RESTART);
+	if (in_reconfig) {
+		list_for_each_entry(sdata, &local->interfaces, list) {
+			if (!ieee80211_sdata_running(sdata))
+				continue;
+			if (sdata->vif.type == NL80211_IFTYPE_STATION)
+				ieee80211_sta_restart(sdata);
+		}
+	}
 
 	if (!suspended)
 		return 0;
@@ -2697,7 +2724,7 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 	return 0;
 }
 
-void ieee80211_resume_disconnect(struct ieee80211_vif *vif)
+static void ieee80211_reconfig_disconnect(struct ieee80211_vif *vif, u8 flag)
 {
 	struct ieee80211_sub_if_data *sdata;
 	struct ieee80211_local *local;
@@ -2709,18 +2736,34 @@ void ieee80211_resume_disconnect(struct ieee80211_vif *vif)
 	sdata = vif_to_sdata(vif);
 	local = sdata->local;
 
-	if (WARN_ON(!local->resuming))
+	if (WARN_ON(flag & IEEE80211_SDATA_DISCONNECT_RESUME &&
+		    !local->resuming))
+		return;
+
+	if (WARN_ON(flag & IEEE80211_SDATA_DISCONNECT_HW_RESTART &&
+		    !local->in_reconfig))
 		return;
 
 	if (WARN_ON(vif->type != NL80211_IFTYPE_STATION))
 		return;
 
-	sdata->flags |= IEEE80211_SDATA_DISCONNECT_RESUME;
+	sdata->flags |= flag;
 
 	mutex_lock(&local->key_mtx);
 	list_for_each_entry(key, &sdata->key_list, list)
 		key->flags |= KEY_FLAG_TAINTED;
 	mutex_unlock(&local->key_mtx);
+}
+
+void ieee80211_hw_restart_disconnect(struct ieee80211_vif *vif)
+{
+	ieee80211_reconfig_disconnect(vif, IEEE80211_SDATA_DISCONNECT_HW_RESTART);
+}
+EXPORT_SYMBOL_GPL(ieee80211_hw_restart_disconnect);
+
+void ieee80211_resume_disconnect(struct ieee80211_vif *vif)
+{
+	ieee80211_reconfig_disconnect(vif, IEEE80211_SDATA_DISCONNECT_RESUME);
 }
 EXPORT_SYMBOL_GPL(ieee80211_resume_disconnect);
 
@@ -2897,10 +2940,11 @@ u8 ieee80211_ie_len_he_cap(struct ieee80211_sub_if_data *sdata, u8 iftype)
 				     he_cap->he_cap_elem.phy_cap_info);
 }
 
-u8 *ieee80211_ie_build_he_cap(u8 *pos,
+u8 *ieee80211_ie_build_he_cap(u32 disable_flags, u8 *pos,
 			      const struct ieee80211_sta_he_cap *he_cap,
 			      u8 *end)
 {
+	struct ieee80211_he_cap_elem elem;
 	u8 n;
 	u8 ie_len;
 	u8 *orig_pos = pos;
@@ -2913,7 +2957,23 @@ u8 *ieee80211_ie_build_he_cap(u8 *pos,
 	if (!he_cap)
 		return orig_pos;
 
-	n = ieee80211_he_mcs_nss_size(&he_cap->he_cap_elem);
+	/* modify on stack first to calculate 'n' and 'ie_len' correctly */
+	elem = he_cap->he_cap_elem;
+
+	if (disable_flags & IEEE80211_STA_DISABLE_40MHZ)
+		elem.phy_cap_info[0] &=
+			~(IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_40MHZ_80MHZ_IN_5G |
+			  IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_40MHZ_IN_2G);
+
+	if (disable_flags & IEEE80211_STA_DISABLE_160MHZ)
+		elem.phy_cap_info[0] &=
+			~IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_160MHZ_IN_5G;
+
+	if (disable_flags & IEEE80211_STA_DISABLE_80P80MHZ)
+		elem.phy_cap_info[0] &=
+			~IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_80PLUS80_MHZ_IN_5G;
+
+	n = ieee80211_he_mcs_nss_size(&elem);
 	ie_len = 2 + 1 +
 		 sizeof(he_cap->he_cap_elem) + n +
 		 ieee80211_he_ppe_size(he_cap->ppe_thres[0],
@@ -2927,8 +2987,8 @@ u8 *ieee80211_ie_build_he_cap(u8 *pos,
 	*pos++ = WLAN_EID_EXT_HE_CAPABILITY;
 
 	/* Fixed data */
-	memcpy(pos, &he_cap->he_cap_elem, sizeof(he_cap->he_cap_elem));
-	pos += sizeof(he_cap->he_cap_elem);
+	memcpy(pos, &elem, sizeof(elem));
+	pos += sizeof(elem);
 
 	memcpy(pos, &he_cap->he_mcs_nss_supp, n);
 	pos += n;
@@ -4290,7 +4350,7 @@ void ieee80211_recalc_dtim(struct ieee80211_local *local,
 {
 	u64 tsf = drv_get_tsf(local, sdata);
 	u64 dtim_count = 0;
-	u16 beacon_int = sdata->vif.bss_conf.beacon_int * 1024;
+	u32 beacon_int = sdata->vif.bss_conf.beacon_int * 1024;
 	u8 dtim_period = sdata->vif.bss_conf.dtim_period;
 	struct ps_data *ps;
 	u8 bcns_from_dtim;

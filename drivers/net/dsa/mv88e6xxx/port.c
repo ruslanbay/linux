@@ -283,7 +283,7 @@ static int mv88e6xxx_port_set_speed_duplex(struct mv88e6xxx_chip *chip,
 	if (err)
 		return err;
 
-	if (speed)
+	if (speed != SPEED_UNFORCED)
 		dev_dbg(chip->dev, "p%d: Speed set to %d Mbps\n", port, speed);
 	else
 		dev_dbg(chip->dev, "p%d: Speed unforced\n", port);
@@ -516,7 +516,7 @@ int mv88e6393x_port_set_speed_duplex(struct mv88e6xxx_chip *chip, int port,
 	if (err)
 		return err;
 
-	if (speed)
+	if (speed != SPEED_UNFORCED)
 		dev_dbg(chip->dev, "p%d: Speed set to %d Mbps\n", port, speed);
 	else
 		dev_dbg(chip->dev, "p%d: Speed unforced\n", port);
@@ -1699,6 +1699,7 @@ int mv88e6393x_port_set_policy(struct mv88e6xxx_chip *chip, int port,
 	ptr = shift / 8;
 	shift %= 8;
 	mask >>= ptr * 8;
+	ptr <<= 8;
 
 	err = mv88e6393x_port_policy_read(chip, port, ptr, &reg);
 	if (err)
