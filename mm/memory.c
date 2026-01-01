@@ -5071,19 +5071,11 @@ static vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 
 		speculative_page_walk_end();
 
-		if (!vmf.pte && uffd_missing_sigbus)
-			return VM_FAULT_SIGBUS;
-
 		return handle_pte_fault(&vmf);
 
 	spf_fail:
 		speculative_page_walk_end();
-		/*
-		 * Failing page-table walk is similar to page-missing so give an
-		 * opportunity to SIGBUS+MISSING userfault to handle it before
-		 * retrying with mmap_lock
-		 */
-		return uffd_missing_sigbus ? VM_FAULT_SIGBUS : VM_FAULT_RETRY;
+		return VM_FAULT_RETRY;
 	}
 #endif	/* CONFIG_SPECULATIVE_PAGE_FAULT */
 
