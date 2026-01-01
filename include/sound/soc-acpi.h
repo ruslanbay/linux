@@ -60,9 +60,11 @@ static inline struct snd_soc_acpi_mach *snd_soc_acpi_codec_list(void *arg)
  * @acpi_ipc_irq_index: used for BYT-CR detection
  * @platform: string used for HDAudio codec support
  * @codec_mask: used for HDAudio support
+ * @dmic_num: number of SoC- or chipset-attached PDM digital microphones
  * @common_hdmi_codec_drv: use commom HDAudio HDMI codec driver
- * @link_mask: links enabled on the board
- * @links: array of link _ADR descriptors, null terminated
+ * @link_mask: SoundWire links enabled on the board
+ * @links: array of SoundWire link _ADR descriptors, null terminated
+ * @i2s_link_mask: I2S/TDM links enabled on the board
  * @num_dai_drivers: number of elements in @dai_drivers
  * @dai_drivers: pointer to dai_drivers, used e.g. in nocodec mode
  */
@@ -74,6 +76,7 @@ struct snd_soc_acpi_mach_params {
 	bool common_hdmi_codec_drv;
 	u32 link_mask;
 	const struct snd_soc_acpi_link_adr *links;
+	u32 i2s_link_mask;
 	u32 num_dai_drivers;
 	struct snd_soc_dai_driver *dai_drivers;
 };
@@ -133,6 +136,7 @@ struct snd_soc_acpi_link_adr {
  * @links: array of link _ADR descriptors, null terminated.
  * @drv_name: machine driver name
  * @fw_filename: firmware file name. Used when SOF is not enabled.
+ * @tplg_filename: topology file name. Used when SOF is not enabled.
  * @board: board name
  * @machine_quirk: pointer to quirk, usually based on DMI information when
  * ACPI ID alone is not sufficient, wrong or misleading
@@ -150,6 +154,7 @@ struct snd_soc_acpi_mach {
 	const struct snd_soc_acpi_link_adr *links;
 	const char *drv_name;
 	const char *fw_filename;
+	const char *tplg_filename;
 	const char *board;
 	struct snd_soc_acpi_mach * (*machine_quirk)(void *arg);
 	const void *quirk_data;
