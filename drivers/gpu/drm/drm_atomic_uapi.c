@@ -466,6 +466,14 @@ static int drm_atomic_crtc_set_property(struct drm_crtc *crtc,
 					&replaced);
 		state->color_mgmt_changed |= replaced;
 		return ret;
+	} else if (property == config->ctm_post_offset_property) {
+		ret = drm_atomic_replace_property_blob_from_id(dev,
+					&state->ctm_post_offset,
+					val,
+					sizeof(struct drm_color_ctm_post_offset), -1,
+					&replaced);
+		state->color_mgmt_changed |= replaced;
+		return ret;
 	} else if (property == config->gamma_lut_property) {
 		ret = drm_atomic_replace_property_blob_from_id(dev,
 					&state->gamma_lut,
@@ -517,6 +525,8 @@ drm_atomic_crtc_get_property(struct drm_crtc *crtc,
 		*val = (state->degamma_lut) ? state->degamma_lut->base.id : 0;
 	else if (property == config->ctm_property)
 		*val = (state->ctm) ? state->ctm->base.id : 0;
+	else if (property == config->ctm_post_offset_property)
+		*val = (state->ctm_post_offset) ? state->ctm_post_offset->base.id : 0;
 	else if (property == config->gamma_lut_property)
 		*val = (state->gamma_lut) ? state->gamma_lut->base.id : 0;
 	else if (property == config->prop_out_fence_ptr)
@@ -594,6 +604,8 @@ static int drm_atomic_plane_set_property(struct drm_plane *plane,
 		state->rotation = val;
 	} else if (property == plane->zpos_property) {
 		state->zpos = val;
+	} else if (property == plane->decryption_property) {
+		state->decryption_reqd = val;
 	} else if (property == plane->color_encoding_property) {
 		state->color_encoding = val;
 	} else if (property == plane->color_range_property) {
@@ -660,6 +672,8 @@ drm_atomic_plane_get_property(struct drm_plane *plane,
 		*val = state->rotation;
 	} else if (property == plane->zpos_property) {
 		*val = state->zpos;
+	} else if (property == plane->decryption_property) {
+		*val = state->decryption_reqd;
 	} else if (property == plane->color_encoding_property) {
 		*val = state->color_encoding;
 	} else if (property == plane->color_range_property) {
