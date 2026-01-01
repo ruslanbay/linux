@@ -18,6 +18,7 @@
 #include <linux/io.h>
 #include <linux/list.h>
 #include <linux/dma-mapping.h>
+#include <asm/processor.h>
 
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
@@ -2421,6 +2422,17 @@ static void __dwc3_gadget_set_ssp_rate(struct dwc3 *dwc)
 	dwc3_writel(dwc->regs, DWC3_DCFG, reg);
 }
 
+static inline bool platform_is_bxtp(void)
+{
+#ifdef CONFIG_X86_64
+        if ((boot_cpu_data.x86_model == 0x5c)
+                && (boot_cpu_data.x86_stepping >= 0x8)
+                && (boot_cpu_data.x86_stepping <= 0xf))
+                return true;
+#endif
+        return false;
+}
+
 static void __dwc3_gadget_set_speed(struct dwc3 *dwc)
 {
 	enum usb_device_speed	speed;
@@ -2465,9 +2477,23 @@ static void __dwc3_gadget_set_speed(struct dwc3 *dwc)
 			break;
 		case USB_SPEED_SUPER:
 			reg |= DWC3_DCFG_SUPERSPEED;
+			/*
+			 * WORKAROUND: BXTP platform USB3.0 port SS fail,
+			 * We switch SS to HS to enable USB3.0.
+			 */
+			if (platform_is_bxtp())
+				reg |= DWC3_DCFG_HIGHSPEED;
+			else
+				reg |= DWC3_DCFG_SUPERSPEED;
 			break;
 		case USB_SPEED_SUPER_PLUS:
-			if (DWC3_IP_IS(DWC3))
+			/*
+			 * WORKAROUND: BXTP platform USB3.0 port SS fail,
+			 * We switch SS to HS to enable USB3.0.
+			 */
+			if (platform_is_bxtp())
+				reg |= DWC3_DCFG_HIGHSPEED;
+			else if (DWC3_IP_IS(DWC3))
 				reg |= DWC3_DCFG_SUPERSPEED;
 			else
 				reg |= DWC3_DCFG_SUPERSPEED_PLUS;
@@ -2718,7 +2744,7 @@ static void dwc3_gadget_enable_irq(struct dwc3 *dwc)
 			DWC3_DEVTEN_USBRSTEN |
 			DWC3_DEVTEN_DISCONNEVTEN);
 
-	if (DWC3_VER_IS_PRIOR(DWC3, 250A))
+	if (DWC3_VER_IS_WITHIN(DWC3, ANY, 260A))
 		reg |= DWC3_DEVTEN_ULSTCNGEN;
 
 	/* On 2.30a and above this bit enables U3/L2-L1 Suspend Events */
