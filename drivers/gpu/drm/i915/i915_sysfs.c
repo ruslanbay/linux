@@ -29,6 +29,7 @@
 #include <linux/module.h>
 #include <linux/stat.h>
 #include <linux/sysfs.h>
+#include <linux/string.h>
 
 #include "gt/intel_rc6.h"
 #include "gt/intel_rps.h"
@@ -38,6 +39,10 @@
 #include "i915_sysfs.h"
 #include "intel_pm.h"
 #include "intel_sideband.h"
+
+#if IS_ENABLED(CONFIG_DRM_I915_MEMTRACK)
+#include "../drm_internal.h"
+#endif
 
 static inline struct drm_i915_private *kdev_minor_to_i915(struct device *kdev)
 {
@@ -504,6 +509,230 @@ static void i915_teardown_error_capture(struct device *kdev)
 {
 	sysfs_remove_bin_file(&kdev->kobj, &error_state_attr);
 }
+
+#if IS_ENABLED(CONFIG_DRM_I915_MEMTRACK)
+#define dev_to_drm_minor(d) dev_get_drvdata((d))
+
+static ssize_t i915_gem_clients_state_read(struct file *filp,
+	struct kobject *memtrack_kobj,
+	struct bin_attribute *attr,
+	char *buf, loff_t off, size_t count)
+{
+	struct kobject *kobj = memtrack_kobj->parent;
+	struct device *kdev = container_of(kobj, struct device, kobj);
+	struct drm_minor *minor = dev_to_drm_minor(kdev);
+	struct drm_device *dev = minor->dev;
+	struct drm_i915_error_state_buf error_str;
+	int ret;
+
+	ret = i915_error_state_buf_init(&error_str, to_i915(dev), 4096, 0);
+	if (ret)
+		return ret;
+
+	ret = i915_get_drm_clients_info(&error_str, dev);
+	if (ret) {
+		i915_error_state_buf_release(&error_str);
+		return ret;
+	}
+
+	ret = memory_read_from_buffer(buf, count, &off, error_str.buf, error_str.bytes);
+	i915_error_state_buf_release(&error_str);
+
+	return ret;
+}
+
+#define GEM_OBJ_STAT_BUF_SIZE (4*1024) /* 4KB */
+#define GEM_OBJ_STAT_BUF_SIZE_MAX (1024*1024) /* 1MB */
+
+struct i915_gem_file_attr_priv {
+	struct bin_attribute *obj_attr;
+	struct kobject *kobj;
+	struct kref ref;
+	char tgid_str[16];
+	struct pid *tgid;
+};
+
+static void i915_gem_sysfs_file_release(struct kref *ref)
+{
+	struct i915_gem_file_attr_priv *attr_priv =
+			container_of(ref, struct i915_gem_file_attr_priv, ref);
+
+	if (attr_priv->kobj && attr_priv->obj_attr) {
+		sysfs_remove_bin_file(attr_priv->kobj, attr_priv->obj_attr);
+	}
+
+	kfree(attr_priv->obj_attr);
+	kfree(attr_priv);
+}
+
+static ssize_t i915_gem_read_objects(struct file *filp,
+		struct kobject *memtrack_kobj,
+		struct bin_attribute *attr,
+		char *buf, loff_t off, size_t count)
+{
+	struct kobject *kobj = memtrack_kobj->parent;
+	struct device *kdev = container_of(kobj, struct device, kobj);
+	struct drm_minor *minor = dev_to_drm_minor(kdev);
+	struct drm_device *dev = minor->dev;
+	struct i915_gem_file_attr_priv *attr_priv;
+	struct pid *tgid;
+	struct drm_i915_error_state_buf local_buf;
+	ssize_t ret_count = 0;
+	long bytes_available;
+	int ret = 0, buf_size = GEM_OBJ_STAT_BUF_SIZE;
+
+	if (!attr || !attr->private) {
+		DRM_ERROR("attr | attr->private pointer is NULL\n");
+		return -EINVAL;
+	}
+	attr_priv = attr->private;
+	tgid = attr_priv->tgid;
+
+retry:
+	ret = i915_obj_state_buf_init(&local_buf, buf_size);
+	if (ret) {
+		DRM_ERROR("obj state buf init failed. buf_size=%d\n", buf_size);
+		return ret;
+	}
+
+	ret = i915_gem_get_obj_info(&local_buf, dev, tgid);
+	if (ret) {
+		i915_error_state_buf_release(&local_buf);
+		return ret;
+	}
+
+	if (!i915_error_ok(&local_buf)) {
+		i915_error_state_buf_release(&local_buf);
+		if (buf_size >= GEM_OBJ_STAT_BUF_SIZE_MAX) {
+			DRM_DEBUG_DRIVER("obj stat buf size limit reached\n");
+			ret = -ENOMEM;
+		} else {
+			buf_size *= 2;
+			goto retry;
+		}
+
+		if (ret)
+			return ret;
+	}
+
+	bytes_available = (long)local_buf.bytes - (long)off;
+	if (bytes_available > 0) {
+		ret_count = min_t(size_t, count, bytes_available);
+		memcpy(buf, local_buf.buf + off, ret_count);
+	} else {
+		ret_count = 0;
+	}
+
+	i915_error_state_buf_release(&local_buf);
+
+	return ret_count;
+}
+
+int i915_gem_create_sysfs_file_entry(struct drm_device *dev,
+		struct drm_file *file)
+{
+	struct drm_i915_file_private *file_priv = file->driver_priv;
+	struct drm_i915_private *i915 = to_i915(dev);
+	struct i915_gem_file_attr_priv *attr_priv;
+	struct bin_attribute *obj_attr;
+	struct drm_file *file_local;
+	int ret;
+
+	mutex_lock(&dev->filelist_mutex);
+	list_for_each_entry(file_local, &dev->filelist, lhead) {
+		struct drm_i915_file_private *file_priv_local =
+			file_local->driver_priv;
+
+		if (file_priv_local->obj_attr &&
+			file_priv->tgid == file_priv_local->tgid) {
+
+			file_priv->obj_attr = file_priv_local->obj_attr;
+			attr_priv = file_priv->obj_attr->private;
+			kref_get(&attr_priv->ref);
+
+			mutex_unlock(&dev->filelist_mutex);
+			return 0;
+		}
+	}
+	mutex_unlock(&dev->filelist_mutex);
+
+	obj_attr = kzalloc(sizeof(*obj_attr), GFP_KERNEL);
+	if (!obj_attr) {
+		DRM_ERROR("Alloc failed. Out of memory\n");
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	attr_priv = kzalloc(sizeof(*attr_priv), GFP_KERNEL);
+	if (!attr_priv) {
+		DRM_ERROR("Alloc failed. Out of memory\n");
+		ret = -ENOMEM;
+		goto out_obj_attr;
+	}
+
+	kref_init(&attr_priv->ref);
+	attr_priv->obj_attr = obj_attr;
+	attr_priv->kobj = &i915->memtrack_kobj;
+
+	snprintf(attr_priv->tgid_str, 16, "%d", task_tgid_nr(current));
+	obj_attr->attr.name = attr_priv->tgid_str;
+	obj_attr->attr.mode = 0644;
+	obj_attr->size = 0;
+	obj_attr->read = i915_gem_read_objects;
+
+	attr_priv->tgid = file_priv->tgid;
+	obj_attr->private = attr_priv;
+
+	if (kobject_name(&i915->memtrack_kobj)) {
+		ret = sysfs_create_bin_file(&i915->memtrack_kobj, obj_attr);
+		if (ret) {
+			DRM_ERROR(
+				"sysfs tgid file setup failed. tgid=%d, process:%s, ret:%d\n",
+				pid_nr(file_priv->tgid), file_priv->process_name, ret);
+			goto out_attr_priv;
+		}
+	}
+
+	file_priv->obj_attr = obj_attr;
+	return 0;
+
+out_attr_priv:
+	kfree(attr_priv);
+out_obj_attr:
+	kfree(obj_attr);
+out:
+	return ret;
+}
+
+void i915_gem_remove_sysfs_file_entry(struct drm_device *dev,
+		struct drm_file *file)
+{
+	struct drm_i915_file_private *file_priv = file->driver_priv;
+	struct i915_gem_file_attr_priv *attr_priv;
+
+	if (WARN_ON(!file_priv->obj_attr))
+		return;
+
+	attr_priv = file_priv->obj_attr->private;
+	if (attr_priv)
+		kref_put(&attr_priv->ref, i915_gem_sysfs_file_release);
+}
+
+static struct bin_attribute i915_gem_client_state_attr = {
+	.attr.name = "i915_gem_meminfo",
+	.attr.mode = 0644,
+	.size = 0,
+	.read = i915_gem_clients_state_read,
+};
+
+static struct attribute *memtrack_kobj_attrs[] = {NULL};
+
+static struct kobj_type memtrack_kobj_type = {
+	.release = NULL,
+	.sysfs_ops = NULL,
+	.default_attrs = memtrack_kobj_attrs,
+};
+#endif
 #else
 static void i915_setup_error_capture(struct device *kdev) {}
 static void i915_teardown_error_capture(struct device *kdev) {}
@@ -562,6 +791,26 @@ void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 
 	i915_setup_error_capture(kdev);
 
+#if IS_ENABLED(CONFIG_DRM_I915_MEMTRACK)
+	/*
+	 * Create the gfx_memtrack directory for memtrack sysfs files
+	 */
+	ret = kobject_init_and_add(
+			&dev_priv->memtrack_kobj, &memtrack_kobj_type,
+			&kdev->kobj, "gfx_memtrack");
+	if (unlikely(ret != 0)) {
+		DRM_ERROR(
+			"i915 sysfs setup memtrack directory failed\n");
+		kobject_put(&dev_priv->memtrack_kobj);
+	} else {
+		ret = sysfs_create_bin_file(&dev_priv->memtrack_kobj,
+				&i915_gem_client_state_attr);
+		if (ret)
+			DRM_ERROR(
+				"i915_gem_client_state sysfs setup failed\n");
+	}
+#endif
+
 	intel_engines_add_sysfs(dev_priv);
 }
 
@@ -580,5 +829,12 @@ void i915_teardown_sysfs(struct drm_i915_private *dev_priv)
 #ifdef CONFIG_PM
 	sysfs_unmerge_group(&kdev->kobj, &rc6_attr_group);
 	sysfs_unmerge_group(&kdev->kobj, &rc6p_attr_group);
+#endif
+
+#if IS_ENABLED(CONFIG_DRM_I915_MEMTRACK)
+	sysfs_remove_bin_file(&dev_priv->memtrack_kobj,
+			&i915_gem_client_state_attr);
+	kobject_del(&dev_priv->memtrack_kobj);
+	kobject_put(&dev_priv->memtrack_kobj);
 #endif
 }

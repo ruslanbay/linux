@@ -1021,6 +1021,7 @@ skl_program_plane(struct intel_plane *plane,
 	u32 plane_color_ctl = 0, aux_dist = 0;
 	unsigned long irqflags;
 	u32 keymsk, keymax;
+	u32 plane_surf;
 	u32 plane_ctl = plane_state->ctl;
 
 	plane_ctl |= skl_plane_ctl_crtc(crtc_state);
@@ -1109,8 +1110,15 @@ skl_program_plane(struct intel_plane *plane,
 	 * the control register just before the surface register.
 	 */
 	intel_de_write_fw(dev_priv, PLANE_CTL(pipe, plane_id), plane_ctl);
-	intel_de_write_fw(dev_priv, PLANE_SURF(pipe, plane_id),
-			  intel_plane_ggtt_offset(plane_state) + surf_addr);
+
+	plane_surf = intel_plane_ggtt_offset(plane_state) + surf_addr;
+
+	if (plane_state->uapi.decryption_reqd)
+		plane_surf |= PLANE_SURF_DECRYPTION_ENABLED;
+	else
+		plane_surf &= ~PLANE_SURF_DECRYPTION_ENABLED;
+
+	intel_de_write_fw(dev_priv, PLANE_SURF(pipe, plane_id), plane_surf);
 
 	spin_unlock_irqrestore(&dev_priv->uncore.lock, irqflags);
 }
@@ -2146,6 +2154,12 @@ skl_universal_plane_create(struct drm_i915_private *dev_priv,
 	drm_plane_create_rotation_property(&plane->base,
 					   DRM_MODE_ROTATE_0,
 					   supported_rotations);
+
+	if (plane_id == PLANE_PRIMARY ||
+	   (plane_id >= PLANE_SPRITE0 && plane_id <= PLANE_SPRITE5)) {
+		if (drm_plane_create_decryption_property(&plane->base))
+			DRM_ERROR("[hongfu drm]Failed to create decryption property\n");
+	}
 
 	supported_csc = BIT(DRM_COLOR_YCBCR_BT601) | BIT(DRM_COLOR_YCBCR_BT709);
 
