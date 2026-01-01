@@ -3098,6 +3098,7 @@ static int nvme_init_identify(struct nvme_ctrl *ctrl)
 	ret = nvme_mpath_init_identify(ctrl, id);
 	if (ret < 0)
 		goto out_free;
+	ctrl->rpmbs = le32_to_cpu(id->rpmbs);
 
 	if (ctrl->apst_enabled && !prev_apst_enabled)
 		dev_pm_qos_expose_latency_tolerance(ctrl->device);
