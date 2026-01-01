@@ -159,6 +159,7 @@ config SND_SOC_ALL_CODECS
 	imply SND_SOC_RT274
 	imply SND_SOC_RT286
 	imply SND_SOC_RT298
+	imply SND_SOC_TDF8532
 	imply SND_SOC_RT1011
 	imply SND_SOC_RT1015
 	imply SND_SOC_RT1015P
@@ -851,6 +852,16 @@ config SND_SOC_HDAC_HDA
 	tristate
 	select SND_HDA
 
+config SND_SOC_HDA
+	tristate "HD-Audio codec driver"
+	select SND_HDA_EXT_CORE
+	select SND_HDA
+	help
+	  This enables HD-Audio codec support in ASoC subsystem. Compared
+	  to SND_SOC_HDAC_HDA, driver's behavior is identical to HD-Audio
+	  legacy solution - including the dynamic resource allocation
+	  based on actual codec capabilities.
+
 config SND_SOC_ICS43432
 	tristate "ICS43423 and compatible i2s microphones"
 
@@ -1137,6 +1148,10 @@ config SND_SOC_RT286
 config SND_SOC_RT298
 	tristate
 	depends on I2C
+
+config SND_SOC_TDF8532
+        tristate
+        depends on I2C
 
 config SND_SOC_RT1011
 	tristate

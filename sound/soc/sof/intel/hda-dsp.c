@@ -664,10 +664,6 @@ static int hda_suspend(struct snd_sof_dev *sdev, bool runtime_suspend)
 
 static int hda_resume(struct snd_sof_dev *sdev, bool runtime_resume)
 {
-#if IS_ENABLED(CONFIG_SND_SOC_SOF_HDA)
-	struct hdac_bus *bus = sof_to_bus(sdev);
-	struct hdac_ext_link *hlink = NULL;
-#endif
 	int ret;
 
 	/* display codec must be powered before link reset */
@@ -694,16 +690,6 @@ static int hda_resume(struct snd_sof_dev *sdev, bool runtime_resume)
 		if (sdev->system_suspend_target == SOF_SUSPEND_NONE)
 			hda_codec_jack_check(sdev);
 	}
-
-	/* turn off the links that were off before suspend */
-	list_for_each_entry(hlink, &bus->hlink_list, list) {
-		if (!hlink->ref_count)
-			snd_hdac_ext_bus_link_power_down(hlink);
-	}
-
-	/* check dma status and clean up CORB/RIRB buffers */
-	if (!bus->cmd_dma_state)
-		snd_hdac_bus_stop_cmd_io(bus);
 #endif
 
 	/* enable ppcap interrupt */
@@ -920,7 +906,7 @@ int hda_dsp_set_hw_params_upon_resume(struct snd_sof_dev *sdev)
 		if (stream->link_substream) {
 			rtd = asoc_substream_to_rtd(stream->link_substream);
 			name = asoc_rtd_to_codec(rtd, 0)->component->name;
-			link = snd_hdac_ext_bus_get_link(bus, name);
+			link = snd_hdac_ext_bus_get_hlink_by_name(bus, name);
 			if (!link)
 				return -EINVAL;
 
@@ -931,7 +917,7 @@ int hda_dsp_set_hw_params_upon_resume(struct snd_sof_dev *sdev)
 				continue;
 
 			stream_tag = hdac_stream(stream)->stream_tag;
-			snd_hdac_ext_link_clear_stream_id(link, stream_tag);
+			snd_hdac_ext_bus_link_clear_stream_id(link, stream_tag);
 		}
 	}
 #endif
