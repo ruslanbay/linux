@@ -3203,16 +3203,16 @@ static int check_array_args(unsigned int cmd, void *parg, size_t *array_size,
 
 	case VIDIOC_SUBDEV_G_ROUTING:
 	case VIDIOC_SUBDEV_S_ROUTING: {
-		struct v4l2_subdev_routing *routing = parg;
-
-		if (routing->num_routes > 256)
-			return -E2BIG;
-
-		*user_ptr = u64_to_user_ptr(routing->routes);
-		*kernel_ptr = (void **)&routing->routes;
-		*array_size = sizeof(struct v4l2_subdev_route)
-			    * routing->num_routes;
-		ret = 1;
+		struct v4l2_subdev_routing *route = parg;
+		if (route->num_routes > 0) {
+			if (route->num_routes > 256)
+				return -EINVAL;
+			*user_ptr = (void __user *)route->routes;
+			*kernel_ptr = (void *)&route->routes;
+			*array_size = sizeof(struct v4l2_subdev_route)
+				    * route->num_routes;
+			ret = 1;
+		}
 		break;
 	}
 	}

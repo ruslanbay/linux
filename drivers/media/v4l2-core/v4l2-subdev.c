@@ -858,32 +858,8 @@ static long subdev_do_ioctl(struct file *file, unsigned int cmd, void *arg,
 	case VIDIOC_SUBDEV_QUERYSTD:
 		return v4l2_subdev_call(sd, video, querystd, arg);
 
-	case VIDIOC_SUBDEV_G_ROUTING: {
-		struct v4l2_subdev_routing *routing = arg;
-		struct v4l2_subdev_krouting *krouting;
-
-		if (!v4l2_subdev_enable_streams_api)
-			return -ENOIOCTLCMD;
-
-		if (!(sd->flags & V4L2_SUBDEV_FL_STREAMS))
-			return -ENOIOCTLCMD;
-
-		memset(routing->reserved, 0, sizeof(routing->reserved));
-
-		krouting = &state->routing;
-
-		if (routing->num_routes < krouting->num_routes) {
-			routing->num_routes = krouting->num_routes;
-			return -ENOSPC;
-		}
-
-		memcpy((struct v4l2_subdev_route *)(uintptr_t)routing->routes,
-		       krouting->routes,
-		       krouting->num_routes * sizeof(*krouting->routes));
-		routing->num_routes = krouting->num_routes;
-
-		return 0;
-	}
+	case VIDIOC_SUBDEV_G_ROUTING:
+		return v4l2_subdev_call(sd, pad, get_routing, arg);
 
 	case VIDIOC_SUBDEV_S_ROUTING: {
 		struct v4l2_subdev_routing *routing = arg;
@@ -891,46 +867,37 @@ static long subdev_do_ioctl(struct file *file, unsigned int cmd, void *arg,
 			(struct v4l2_subdev_route *)(uintptr_t)routing->routes;
 		struct v4l2_subdev_krouting krouting = {};
 		unsigned int i;
+		int rval;
 
-		if (!v4l2_subdev_enable_streams_api)
-			return -ENOIOCTLCMD;
-
-		if (!(sd->flags & V4L2_SUBDEV_FL_STREAMS))
-			return -ENOIOCTLCMD;
-
-		if (routing->which != V4L2_SUBDEV_FORMAT_TRY && ro_subdev)
-			return -EPERM;
-
-		memset(routing->reserved, 0, sizeof(routing->reserved));
+		if (routing->num_routes > sd->entity.num_pads)
+			return -EINVAL;
 
 		for (i = 0; i < routing->num_routes; ++i) {
-			const struct v4l2_subdev_route *route = &routes[i];
-			const struct media_pad *pads = sd->entity.pads;
+			unsigned int sink = routing->routes[i].sink_pad;
+			unsigned int source = routing->routes[i].source_pad;
+			struct media_pad *pads = sd->entity.pads;
 
-			if (route->sink_stream > V4L2_SUBDEV_MAX_STREAM_ID ||
-			    route->source_stream > V4L2_SUBDEV_MAX_STREAM_ID)
+			if (sink >= sd->entity.num_pads ||
+			   source >= sd->entity.num_pads)
 				return -EINVAL;
 
-			if (route->sink_pad >= sd->entity.num_pads)
-				return -EINVAL;
-
-			if (!(pads[route->sink_pad].flags &
-			      MEDIA_PAD_FL_SINK))
-				return -EINVAL;
-
-			if (route->source_pad >= sd->entity.num_pads)
-				return -EINVAL;
-
-			if (!(pads[route->source_pad].flags &
-			      MEDIA_PAD_FL_SOURCE))
+			if ((!(routing->routes[i].flags &
+				V4L2_SUBDEV_ROUTE_FL_SOURCE) &&
+			   !(pads[sink].flags & MEDIA_PAD_FL_SINK)) ||
+			   !(pads[source].flags & MEDIA_PAD_FL_SOURCE))
 				return -EINVAL;
 		}
+
+		mutex_lock(&sd->entity.graph_obj.mdev->graph_mutex);
 
 		krouting.num_routes = routing->num_routes;
 		krouting.routes = routes;
 
-		return v4l2_subdev_call(sd, pad, set_routing, state,
+		rval = v4l2_subdev_call(sd, pad, set_routing, state,
 					routing->which, &krouting);
+		mutex_unlock(&sd->entity.graph_obj.mdev->graph_mutex);
+
+		return rval;
 	}
 
 	case VIDIOC_SUBDEV_G_CLIENT_CAP: {
@@ -1124,6 +1091,14 @@ int v4l2_subdev_link_validate_default(struct v4l2_subdev *sd,
 			"%s: field does not match (source %u, sink %u)\n",
 			__func__,
 			source_fmt->format.field, sink_fmt->format.field);
+		pass = false;
+	}
+
+	if (source_fmt->stream != sink_fmt->stream) {
+		dev_dbg(sd->entity.graph_obj.mdev->dev,
+			"%s: stream does not match (source %u, sink %u)\n",
+			__func__,
+			source_fmt->stream, sink_fmt->stream);
 		pass = false;
 	}
 

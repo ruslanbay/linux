@@ -235,13 +235,13 @@ struct v4l2_subdev_route {
  *
  * @which: configuration type (from enum v4l2_subdev_format_whence)
  * @num_routes: the total number of routes in the routes array
- * @routes: pointer to the routes array
+ * @routes: the routes array
  * @reserved: drivers and applications must zero this array
  */
 struct v4l2_subdev_routing {
 	__u32 which;
 	__u32 num_routes;
-	__u64 routes;
+	struct v4l2_subdev_route *routes;
 	__u32 reserved[6];
 };
 
