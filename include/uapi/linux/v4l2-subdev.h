@@ -75,6 +75,9 @@ struct v4l2_subdev_crop {
  * @stream: stream number, defined in subdev routing
  * @reserved: drivers and applications must zero this array
  */
+
+#define V4L2_SUBDEV_FLAG_NEXT_STREAM 0x80000000
+
 struct v4l2_subdev_mbus_code_enum {
 	__u32 pad;
 	__u32 index;
@@ -194,10 +197,19 @@ struct v4l2_subdev_capability {
 #define V4L2_SUBDEV_CAP_STREAMS			0x00000002
 
 /*
- * Is the route active? An active route will start when streaming is enabled
+ *	V4L2_SUBDEV_ROUTE_FL_ACTIVE: Is the route active? An active route will start when streaming is enabled
  * on a video node.
+ *
+ *	V4L2_SUBDEV_ROUTE_FL_IMMUTABLE: Is the stream immutable, i.e.
+ *	can it be activated and inactivated? Set by the driver.
+ *
+ *	V4L2_SUBDEV_ROUTE_FL_SOURCE: Is the sub-device the source of a
+ *	stream? In this case the sink information is unused (and
+ *	zero). Set by the driver.
  */
 #define V4L2_SUBDEV_ROUTE_FL_ACTIVE		(1U << 0)
+#define V4L2_SUBDEV_ROUTE_FL_IMMUTABLE	(1U << 1)
+#define V4L2_SUBDEV_ROUTE_FL_SOURCE		(1U << 2)
 
 /**
  * struct v4l2_subdev_route - A route inside a subdev
