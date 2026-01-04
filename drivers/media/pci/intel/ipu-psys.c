@@ -155,24 +155,20 @@ static int ipu_psys_get_userpages(struct ipu_dma_buf_attach *attach)
 	if (!sgt)
 		return -ENOMEM;
 
-	if (array_size <= PAGE_SIZE)
-		pages = kzalloc(array_size, GFP_KERNEL);
-	else
-		pages = vzalloc(array_size);
+	if (attach->npages != 0) {
+		pages = attach->pages;
+		npages = attach->npages;
+		attach->vma_is_io = 1;
+		goto skip_pages;
+	}
+
+	pages = kvzalloc(array_size, GFP_KERNEL);
 	if (!pages)
 		goto free_sgt;
 
-	down_read(&current->mm->mmap_lock);
+	mmap_read_lock(current->mm);
 	vma = find_vma(current->mm, start);
 	if (!vma) {
-		ret = -EFAULT;
-		goto error_up_read;
-	}
-
-	if (vma->vm_end < start + attach->len) {
-		dev_err(attach->dev,
-			"vma at %lu is too small for %llu bytes\n",
-			start, attach->len);
 		ret = -EFAULT;
 		goto error_up_read;
 	}
@@ -185,6 +181,14 @@ static int ipu_psys_get_userpages(struct ipu_dma_buf_attach *attach)
 
 	if (attach->vma_is_io) {
 		unsigned long io_start = start;
+
+		if (vma->vm_end < start + attach->len) {
+			dev_err(attach->dev,
+				"vma at %lu is too small for %llu bytes\n",
+				start, attach->len);
+			ret = -EFAULT;
+			goto error_up_read;
+		}
 
 		for (nr = 0; nr < npages; nr++, io_start += PAGE_SIZE) {
 			unsigned long pfn;
@@ -202,8 +206,12 @@ static int ipu_psys_get_userpages(struct ipu_dma_buf_attach *attach)
 		if (nr < npages)
 			goto error_up_read;
 	}
-	up_read(&current->mm->mmap_lock);
+	mmap_read_unlock(current->mm);
 
+	attach->pages = pages;
+	attach->npages = npages;
+
+skip_pages:
 	ret = sg_alloc_table_from_pages(sgt, pages, npages,
 					start & ~PAGE_MASK, attach->len,
 					GFP_KERNEL);
@@ -211,13 +219,11 @@ static int ipu_psys_get_userpages(struct ipu_dma_buf_attach *attach)
 		goto error;
 
 	attach->sgt = sgt;
-	attach->pages = pages;
-	attach->npages = npages;
 
 	return 0;
 
 error_up_read:
-	up_read(&current->mm->mmap_lock);
+	mmap_read_unlock(current->mm);
 error:
 	if (!attach->vma_is_io)
 		while (nr > 0)
@@ -249,10 +255,7 @@ static void ipu_psys_put_userpages(struct ipu_dma_buf_attach *attach)
 		}
 	}
 
-	if (is_vmalloc_addr(attach->pages))
-		vfree(attach->pages);
-	else
-		kfree(attach->pages);
+	kvfree(attach->pages);
 
 	sg_free_table(attach->sgt);
 	kfree(attach->sgt);
