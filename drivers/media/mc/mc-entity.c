@@ -263,7 +263,7 @@ EXPORT_SYMBOL_GPL(media_entity_pads_init);
  *
  * Return: true if the pads are connected internally and false otherwise.
  */
-static bool media_entity_has_pad_interdep(struct media_entity *entity,
+bool media_entity_has_pad_interdep(struct media_entity *entity,
 					  unsigned int pad0, unsigned int pad1)
 {
 	if (pad0 >= entity->num_pads || pad1 >= entity->num_pads)
@@ -276,8 +276,9 @@ static bool media_entity_has_pad_interdep(struct media_entity *entity,
 	if (!entity->ops || !entity->ops->has_pad_interdep)
 		return true;
 
-	return entity->ops->has_pad_interdep(entity, pad0, pad1);
+	return entity->ops->has_pad_interdep(entity, pad0, pad1, NULL);
 }
+EXPORT_SYMBOL_GPL(media_entity_has_pad_interdep);
 
 static struct media_entity *
 media_entity_other(struct media_entity *entity, struct media_link *link)
