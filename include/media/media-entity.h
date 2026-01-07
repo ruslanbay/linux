@@ -261,7 +261,7 @@ struct media_entity_operations {
 			  const struct media_pad *remote, u32 flags);
 	int (*link_validate)(struct media_link *link);
 	bool (*has_pad_interdep)(struct media_entity *entity, unsigned int pad0,
-				 unsigned int pad1);
+				 unsigned int pad1, int *stream);
 };
 
 /**
@@ -1082,6 +1082,9 @@ __must_check int media_graph_walk_init(
  * @graph: Media graph structure that will be used to walk the graph
  */
 void media_graph_walk_cleanup(struct media_graph *graph);
+
+bool media_entity_has_pad_interdep(struct media_entity *entity,
+					  unsigned int pad0, unsigned int pad1);
 
 /**
  * media_graph_walk_start - Start walking the media graph at a
