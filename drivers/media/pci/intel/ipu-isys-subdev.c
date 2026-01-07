@@ -297,7 +297,7 @@ int ipu_isys_subdev_fmt_propagate(struct v4l2_subdev *sd,
 			/* n:n case: propagate according to route info */
 		} else if (asd->nsinks == asd->nsources && asd->nsources > 1) {
 			for (i = asd->nsinks; i < sd->entity.num_pads; i++)
-				if (media_entity_has_route(&sd->entity, pad, i))
+				if (media_entity_has_pad_interdep(&sd->entity, pad, i))
 					break;
 
 			if (i != sd->entity.num_pads) {
