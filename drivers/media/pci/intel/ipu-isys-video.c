@@ -38,6 +38,8 @@ module_param(use_stream_stop, bool, 0660);
 MODULE_PARM_DESC(use_stream_stop, "Use STOP command if running in CSI capture mode");
 
 const struct ipu_isys_pixelformat ipu_isys_pfmts[] = {
+	{V4L2_PIX_FMT_Y10, 10, 10, 0, MEDIA_BUS_FMT_Y10_1X10,
+	 IPU_FW_ISYS_FRAME_FORMAT_RAW10},
 	/* YUV vector format */
 	{V4L2_PIX_FMT_YUYV420_V32, 24, 24, 0, MEDIA_BUS_FMT_YUYV12_1X24,
 	 IPU_FW_ISYS_FRAME_FORMAT_YUV420_16},
