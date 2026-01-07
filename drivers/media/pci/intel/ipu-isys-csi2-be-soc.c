@@ -148,7 +148,7 @@ static struct v4l2_subdev_ops csi2_be_soc_sd_ops = {
 
 static struct media_entity_operations csi2_be_soc_entity_ops = {
 	.link_validate = v4l2_subdev_link_validate,
-	.has_route = ipu_isys_subdev_has_route,
+	.has_pad_interdep = ipu_isys_subdev_has_route,
 };
 
 static void csi2_be_soc_set_ffmt(struct v4l2_subdev *sd,
@@ -182,7 +182,7 @@ static void csi2_be_soc_set_ffmt(struct v4l2_subdev *sd,
 		int i;
 
 		for (i = 0; i < asd->nsinks; i++)
-			if (media_entity_has_route(&sd->entity, fmt->pad, i))
+			if (media_entity_has_pad_interdep(&sd->entity, fmt->pad, i))
 				break;
 		if (i != asd->nsinks)
 			sink_pad = i;
