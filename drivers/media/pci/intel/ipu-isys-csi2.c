@@ -423,8 +423,10 @@ static int csi2_link_validate(struct media_link *link)
 		return 0;
 	}
 
+	struct v4l2_subdev_route *routes_ptr = (struct v4l2_subdev_route *)(uintptr_t)routing.routes;
+	
 	for (i = 0; i < routing.num_routes; i++) {
-		if (routing.routes[i].flags & V4L2_SUBDEV_ROUTE_FL_ACTIVE)
+		if (routes_ptr[i].flags & V4L2_SUBDEV_ROUTE_FL_ACTIVE)
 			active++;
 	}
 
