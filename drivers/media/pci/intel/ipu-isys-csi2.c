@@ -527,7 +527,7 @@ static struct v4l2_subdev_ops csi2_sd_ops = {
 
 static struct media_entity_operations csi2_entity_ops = {
 	.link_validate = csi2_link_validate,
-	.has_route = csi2_has_route,
+	.has_pad_interdep = csi2_has_route,
 };
 
 static void csi2_set_ffmt(struct v4l2_subdev *sd,
