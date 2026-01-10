@@ -1432,6 +1432,45 @@ int ipu_isys_video_prepare_streaming(struct ipu_isys_video *av,
 		dev_dbg(dev, "pipeline start failed\n");
 		goto out_enum_cleanup;
 	}
+	
+	// hack - manually set ip->external
+	struct media_entity *ent;
+	static const char *const sensor_names[] = {
+		"ov8865 1-0010", "ov8865 2-0010",
+		"ov5693 1-0036", "ov5693 2-0036",
+		"ov7251 1-0060", "ov7251 2-0060",
+		"Intel IPU4 TPG 0", "Intel IPU4 TPG 1",
+		NULL
+	};
+	
+	/* Hack - manually set ip->external using 5.15 compatible graph API */
+	if (!ip->external) {
+		/* Fix 2: Use media_entity_graph_walk_* for 5.15 */
+		rval = media_graph_walk_init(&graph, mdev);
+		if (rval)
+			goto out_pipeline_stop;
+
+		media_graph_walk_start(&graph, &av->vdev.entity.pads[0]);
+
+		while ((ent = media_graph_walk_next(&graph))) {
+			for (i = 0; i < ent->num_pads; i++) {
+				struct media_pad *pad = &ent->pads[i];
+
+				if (!(pad->flags & MEDIA_PAD_FL_SOURCE))
+					continue;
+
+				if (ent->name && match_string(sensor_names, -1, ent->name) >= 0) {
+					ip->external = pad;
+					dev_info(dev, "5.15 Hack: Set external pad to '%s':%u\n",
+						 ent->name, pad->index);
+					goto found;
+				}
+			}
+		}
+
+	found:
+		media_graph_walk_cleanup(&graph);
+	}
 
 	if (!ip->external) {
 		dev_err(dev, "no external entity set! Driver bug?\n");
