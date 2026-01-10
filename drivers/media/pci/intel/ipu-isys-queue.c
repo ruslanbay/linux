@@ -795,11 +795,20 @@ int ipu_isys_link_fmt_validate(struct ipu_isys_queue *aq)
 		return -EINVAL;
 	}
 
+	/*
+	* Bayer format mismatch might be caused by 180°
+	* hardware rotation (e.g., SBGGR10 vs SGBRG10).
+	* Note: v4l2-ctl reports sensor H/V flips are active,
+	* which shifts the starting color of the Bayer mosaic:
+	* H-flip swaps colors horizontally (e.g., Blue -> Green).
+	* V-flip swaps colors vertically (e.g., Blue -> Red). 
+	*/
 	if (fmt.format.code != av->pfmt->code) {
-		dev_dbg(&av->isys->adev->dev,
+		dev_warn(&av->isys->adev->dev,
 			"wrong media bus code 0x%8.8x (0x%8.8x expected)\n",
 			av->pfmt->code, fmt.format.code);
 		return -EINVAL;
+		// return -EINVAL;
 	}
 
 	return 0;
