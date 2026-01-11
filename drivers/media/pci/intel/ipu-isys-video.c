@@ -1813,13 +1813,22 @@ int ipu_isys_video_prepare_streaming(struct ipu_isys_video *av,
 	struct media_graph graph;
 	struct media_entity *entity;
 	struct media_device *mdev = &av->isys->media_dev;
+	struct media_pipeline *mp;
 	int rval;
 	unsigned int i;
 
-	dev_dbg(dev, "prepare stream: %d\n", state);
+	dev_dbg(dev, "prepare stream to state: %d for entity %s\n",
+		state, av->vdev.entity.name);
+	
 
 	if (!state) {
-		ip = to_ipu_isys_pipeline(media_entity_pipeline(&av->vdev.entity));
+		mp = media_entity_pipeline(&av->vdev.entity);
+		ip = to_ipu_isys_pipeline(mp);
+		if (!ip) {
+			dev_err(dev, "%s no pipeline found for %s\n", __func__,
+				av->vdev.name);
+			return -ENODEV;
+		}
 
 		if (ip->interlaced && isys->short_packet_source ==
 		    IPU_ISYS_SHORT_PACKET_FROM_RECEIVER)
@@ -1890,7 +1899,8 @@ int ipu_isys_video_prepare_streaming(struct ipu_isys_video *av,
 	}
 
 	if (!ip->external) {
-		dev_err(dev, "no external entity set! Driver bug?\n");
+		dev_err(dev, "no external entity set for %s, Driver bug?\n",
+			av->vdev.name);
 		rval = -EINVAL;
 		goto out_pipeline_stop;
 	}
