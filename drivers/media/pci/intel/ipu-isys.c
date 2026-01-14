@@ -1029,7 +1029,7 @@ int isys_isr_one(struct ipu_bus_device *adev)
 	if (!resp)
 		return 1;
 
-	ts = (u64) resp->timestamp[1] << 32 | resp->timestamp[0];
+	ts = (u64)resp->timestamp[1] << 32 | resp->timestamp[0];
 
 	if (resp->error_info.error == IPU_FW_ISYS_ERROR_STREAM_IN_SUSPENSION)
 		/* Suspension is kind of special case: not enough buffers */
@@ -1095,6 +1095,11 @@ int isys_isr_one(struct ipu_bus_device *adev)
 		complete(&pipe->stream_stop_completion);
 		break;
 	case IPU_FW_ISYS_RESP_TYPE_PIN_DATA_READY:
+		/*
+		 * firmware only release the capture msg until software
+		 * get pin_data_ready event
+		 */
+		ipu_put_fw_msg_buf(pipe, resp->buf_id);
 		if (resp->pin_id < IPU_ISYS_OUTPUT_PINS &&
 		    pipe->output_pins[resp->pin_id].pin_ready)
 			pipe->output_pins[resp->pin_id].pin_ready(pipe, resp);
@@ -1102,6 +1107,10 @@ int isys_isr_one(struct ipu_bus_device *adev)
 			dev_err(&adev->dev,
 				"%d:No data pin ready handler for pin id %d\n",
 				resp->stream_handle, resp->pin_id);
+		
+		if (pipe->csi2)
+			ipu_isys_csi2_error(pipe->csi2);
+
 		break;
 	case IPU_FW_ISYS_RESP_TYPE_STREAM_CAPTURE_ACK:
 		ipu_put_fw_mgs_buffer(ipu_bus_get_drvdata(adev), resp->buf_id);
@@ -1149,6 +1158,9 @@ int isys_isr_one(struct ipu_bus_device *adev)
 
 		break;
 	case IPU_FW_ISYS_RESP_TYPE_FRAME_SOF:
+		if (pipe->csi2)
+			ipu_isys_csi2_error(pipe->csi2);
+
 		pipe->seq[pipe->seq_index].sequence =
 		    atomic_read(&pipe->sequence) - 1;
 		pipe->seq[pipe->seq_index].timestamp = ts;
@@ -1160,7 +1172,10 @@ int isys_isr_one(struct ipu_bus_device *adev)
 		    % IPU_ISYS_MAX_PARALLEL_SOF;
 		break;
 	case IPU_FW_ISYS_RESP_TYPE_FRAME_EOF:
-
+		for (i = 0; i < NR_OF_CSI2_VC; i++) {
+			if (pipe->csi2)
+				ipu_isys_csi2_eof_event(pipe->csi2, i);
+		}
 
 		dev_dbg(&adev->dev,
 			"eof: handle %d: (index %u), timestamp 0x%16.16llx\n",

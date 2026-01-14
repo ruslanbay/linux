@@ -2321,3 +2321,18 @@ void ipu_isys_video_cleanup(struct ipu_isys_video *av)
 	mutex_destroy(&av->mutex);
 	ipu_isys_queue_cleanup(&av->aq);
 }
+
+void ipu_put_fw_msg_buf(struct ipu_isys_pipeline *ip, u64 data)
+{
+	struct isys_fw_msgs *msg;
+	unsigned long flags;
+	u64 *ptr = (u64 *)(unsigned long)data;
+
+	if (!ptr)
+		return;
+
+	spin_lock_irqsave(&ip->listlock, flags);
+	msg = container_of(ptr, struct isys_fw_msgs, fw_msg.dummy);
+	list_move(&msg->head, &ip->framebuflist);
+	spin_unlock_irqrestore(&ip->listlock, flags);
+}
