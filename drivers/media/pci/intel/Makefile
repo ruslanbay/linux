@@ -4,6 +4,7 @@
 #
 obj-$(CONFIG_IPU_BRIDGE) += ipu-bridge.o
 obj-y	+= ipu3/
+obj-y	+= ivsc/
 # force check the compile warning to make sure zero warnings
 # note we may have build issue when gcc upgraded.
 ccflags-y := -Wno-error=uninitialized

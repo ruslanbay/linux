@@ -140,6 +140,20 @@ void v4l2_async_debug_init(struct dentry *debugfs_dir);
 void v4l2_async_nf_init(struct v4l2_async_notifier *notifier);
 
 /**
+ * v4l2_async_subdev_nf_init - Initialize a sub-device notifier.
+ *
+ * @notifier: pointer to &struct v4l2_async_notifier
+ * @sd: pointer to &struct v4l2_subdev
+ *
+ * This function initializes the notifier @asc_list. It must be called
+ * before adding a subdevice to a notifier, using one of:
+ * v4l2_async_nf_add_fwnode_remote(), v4l2_async_nf_add_fwnode() or
+ * v4l2_async_nf_add_i2c().
+ */
+void v4l2_async_subdev_nf_init(struct v4l2_async_notifier *notifier,
+			       struct v4l2_subdev *sd);
+
+/**
  * __v4l2_async_nf_add_subdev - Add an async subdev to the
  *				notifier's master asd list.
  *

@@ -526,6 +526,16 @@ void v4l2_async_nf_init(struct v4l2_async_notifier *notifier)
 }
 EXPORT_SYMBOL(v4l2_async_nf_init);
 
+void v4l2_async_subdev_nf_init(struct v4l2_async_notifier *notifier,
+			       struct v4l2_subdev *sd)
+{
+	INIT_LIST_HEAD(&notifier->waiting);
+	INIT_LIST_HEAD(&notifier->done);
+	INIT_LIST_HEAD(&notifier->list);
+	notifier->sd = sd;
+}
+EXPORT_SYMBOL_GPL(v4l2_async_subdev_nf_init);
+
 static int __v4l2_async_nf_register(struct v4l2_async_notifier *notifier)
 {
 	struct v4l2_async_subdev *asd;
