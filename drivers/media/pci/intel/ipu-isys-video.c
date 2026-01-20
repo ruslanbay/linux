@@ -1159,6 +1159,10 @@ void ipu_isys_prepare_firmware_stream_cfg_default(
 	ip->output_pins[pin].pin_ready = ipu_isys_queue_buf_ready;
 	ip->output_pins[pin].aq = aq;
 
+	dev_info(&av->isys->adev->dev,
+		 "[DEBUG] pin_ready callback registered: pin=%u, aq=%p, nof_output_pins=%u\n",
+		 pin, aq, cfg->nof_output_pins);
+
 	pin_info = &cfg->output_pins[pin];
 	pin_info->input_pin_id = 0;
 	pin_info->output_res.width = av->mpix.width;

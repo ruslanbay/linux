@@ -1430,11 +1430,16 @@ static int ov8865_sw_reset(struct ov8865_sensor *sensor)
 static int ov8865_sw_standby(struct ov8865_sensor *sensor, int standby)
 {
 	u8 value = 0;
+	int ret;
 
 	if (!standby)
 		value = OV8865_SW_STANDBY_STREAM_ON;
 
-	return ov8865_write(sensor, OV8865_SW_STANDBY_REG, value);
+	dev_info(sensor->dev, "[DEBUG] sw_standby: writing 0x%02x to reg 0x100 (standby=%d)\n", value, standby);
+	ret = ov8865_write(sensor, OV8865_SW_STANDBY_REG, value);
+	if (ret)
+		dev_err(sensor->dev, "[DEBUG] sw_standby: write failed, ret=%d\n", ret);
+	return ret;
 }
 
 static int ov8865_chip_id_check(struct ov8865_sensor *sensor)
@@ -1476,46 +1481,67 @@ static int ov8865_mipi_configure(struct ov8865_sensor *sensor)
 	unsigned int lanes_count = bus_mipi_csi2->num_data_lanes;
 	int ret;
 
+	dev_info(sensor->dev, "[DEBUG] ov8865_mipi_configure: lanes_count=%u\n", lanes_count);
+
 	ret = ov8865_write(sensor, OV8865_MIPI_SC_CTRL0_REG,
 			   OV8865_MIPI_SC_CTRL0_LANES(lanes_count) |
 			   OV8865_MIPI_SC_CTRL0_MIPI_EN |
 			   OV8865_MIPI_SC_CTRL0_UNKNOWN);
-	if (ret)
+	if (ret) {
+		dev_err(sensor->dev, "[DEBUG] ov8865_mipi_configure: MIPI_SC_CTRL0 write failed: %d\n", ret);
 		return ret;
+	}
+	dev_info(sensor->dev, "[DEBUG] ov8865_mipi_configure: MIPI enabled, lanes=%u\n", lanes_count);
 
 	ret = ov8865_write(sensor, OV8865_MIPI_SC_CTRL2_REG,
 			   OV8865_MIPI_SC_CTRL2_PD_MIPI_RST_SYNC);
-	if (ret)
+	if (ret) {
+		dev_err(sensor->dev, "[DEBUG] ov8865_mipi_configure: MIPI_SC_CTRL2 write failed: %d\n", ret);
 		return ret;
+	}
 
 	if (lanes_count >= 2) {
 		ret = ov8865_write(sensor, OV8865_MIPI_LANE_SEL01_REG,
 				   OV8865_MIPI_LANE_SEL01_LANE0(0) |
 				   OV8865_MIPI_LANE_SEL01_LANE1(1));
-		if (ret)
+		if (ret) {
+			dev_err(sensor->dev, "[DEBUG] ov8865_mipi_configure: LANE_SEL01 write failed: %d\n", ret);
 			return ret;
+		}
+		dev_info(sensor->dev, "[DEBUG] ov8865_mipi_configure: lanes 0-1 configured\n");
 	}
 
 	if (lanes_count >= 4) {
 		ret = ov8865_write(sensor, OV8865_MIPI_LANE_SEL23_REG,
 				   OV8865_MIPI_LANE_SEL23_LANE2(2) |
 				   OV8865_MIPI_LANE_SEL23_LANE3(3));
-		if (ret)
+		if (ret) {
+			dev_err(sensor->dev, "[DEBUG] ov8865_mipi_configure: LANE_SEL23 write failed: %d\n", ret);
 			return ret;
+		}
+		dev_info(sensor->dev, "[DEBUG] ov8865_mipi_configure: lanes 2-3 configured\n");
 	}
 
 	ret = ov8865_update_bits(sensor, OV8865_CLK_SEL1_REG,
 				 OV8865_CLK_SEL1_MIPI_EOF,
 				 OV8865_CLK_SEL1_MIPI_EOF);
-	if (ret)
+	if (ret) {
+		dev_err(sensor->dev, "[DEBUG] ov8865_mipi_configure: CLK_SEL1 update failed: %d\n", ret);
 		return ret;
+	}
 
 	/*
 	 * This value might need to change depending on PCLK rate,
 	 * but it's unclear how. This value seems to generally work
 	 * while the default value was found to cause transmission errors.
 	 */
-	return ov8865_write(sensor, OV8865_MIPI_PCLK_PERIOD_REG, 0x16);
+	dev_info(sensor->dev, "[DEBUG] ov8865_mipi_configure: setting PCLK_PERIOD to 0x16\n");
+	ret = ov8865_write(sensor, OV8865_MIPI_PCLK_PERIOD_REG, 0x16);
+	if (ret)
+		dev_err(sensor->dev, "[DEBUG] ov8865_mipi_configure: PCLK_PERIOD write failed: %d\n", ret);
+	
+	dev_info(sensor->dev, "[DEBUG] ov8865_mipi_configure: completed successfully\n");
+	return ret;
 }
 
 static int ov8865_black_level_configure(struct ov8865_sensor *sensor)
@@ -1911,6 +1937,9 @@ static int ov8865_mode_configure(struct ov8865_sensor *sensor,
 {
 	int ret;
 
+	dev_info(sensor->dev, "[DEBUG] ov8865_mode_configure: output_size=%ux%u, hts=%u, vts=%u\n",
+		 mode->output_size_x, mode->output_size_y, mode->hts, mode->vts);
+
 	/* Output Size X */
 
 	ret = ov8865_write(sensor, OV8865_OUTPUT_SIZE_X_H_REG,
@@ -2104,6 +2133,7 @@ static int ov8865_mode_configure(struct ov8865_sensor *sensor,
 			return ret;
 	}
 
+	dev_info(sensor->dev, "[DEBUG] ov8865_mode_configure: completed successfully\n");
 	return 0;
 }
 
@@ -2334,6 +2364,8 @@ static int ov8865_sensor_init(struct ov8865_sensor *sensor)
 {
 	int ret;
 
+	dev_info(sensor->dev, "[DEBUG] sensor_init: starting\n");
+
 	ret = ov8865_sw_reset(sensor);
 	if (ret) {
 		dev_err(sensor->dev, "failed to perform sw reset\n");
@@ -2370,6 +2402,7 @@ static int ov8865_sensor_init(struct ov8865_sensor *sensor)
 		dev_err(sensor->dev, "failed to configure MIPI\n");
 		return ret;
 	}
+	dev_info(sensor->dev, "[DEBUG] sensor_init: MIPI configured\n");
 
 	ret = ov8865_isp_configure(sensor);
 	if (ret) {
@@ -2619,18 +2652,26 @@ static int ov8865_s_stream(struct v4l2_subdev *subdev, int enable)
 	struct ov8865_state *state = &sensor->state;
 	int ret;
 
+	dev_info(sensor->dev, "[DEBUG] s_stream(%d) called\n", enable);
+
 	if (enable) {
 		ret = pm_runtime_resume_and_get(sensor->dev);
-		if (ret < 0)
+		if (ret < 0) {
+			dev_err(sensor->dev, "[DEBUG] s_stream: pm_runtime_resume_and_get failed: %d\n", ret);
 			return ret;
+		}
+		dev_info(sensor->dev, "[DEBUG] s_stream: pm_runtime_resume_and_get succeeded\n");
 	}
 
 	mutex_lock(&sensor->mutex);
 	ret = ov8865_sw_standby(sensor, !enable);
 	mutex_unlock(&sensor->mutex);
 
-	if (ret)
+	if (ret) {
+		dev_err(sensor->dev, "[DEBUG] s_stream: ov8865_sw_standby failed: %d\n", ret);
 		return ret;
+	}
+	dev_info(sensor->dev, "[DEBUG] s_stream: ov8865_sw_standby succeeded, enable=%d\n", enable);
 
 	state->streaming = !!enable;
 

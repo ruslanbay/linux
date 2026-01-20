@@ -1099,14 +1099,24 @@ int isys_isr_one(struct ipu_bus_device *adev)
 		 * firmware only release the capture msg until software
 		 * get pin_data_ready event
 		 */
+		dev_info(&adev->dev,
+			 "[DEBUG] PIN_DATA_READY: stream_handle=%u, pin_id=%u, nof_pins=%u\n",
+			 resp->stream_handle, resp->pin_id, IPU_ISYS_OUTPUT_PINS);
 		ipu_put_fw_msg_buf(pipe, resp->buf_id);
 		if (resp->pin_id < IPU_ISYS_OUTPUT_PINS &&
-		    pipe->output_pins[resp->pin_id].pin_ready)
+		    pipe->output_pins[resp->pin_id].pin_ready) {
+			dev_dbg(&adev->dev,
+				"[DEBUG] PIN_DATA_READY: Calling pin_ready callback for pin %u\n",
+				resp->pin_id);
 			pipe->output_pins[resp->pin_id].pin_ready(pipe, resp);
-		else
+		} else {
 			dev_err(&adev->dev,
-				"%d:No data pin ready handler for pin id %d\n",
-				resp->stream_handle, resp->pin_id);
+				"[DEBUG] PIN_DATA_READY: No handler for stream=%u pin_id=%u (pin_id < %u: %d, callback: %p)\n",
+				resp->stream_handle, resp->pin_id,
+				IPU_ISYS_OUTPUT_PINS,
+				resp->pin_id < IPU_ISYS_OUTPUT_PINS ? 1 : 0,
+				resp->pin_id < IPU_ISYS_OUTPUT_PINS ? pipe->output_pins[resp->pin_id].pin_ready : NULL);
+		}
 		
 		if (pipe->csi2)
 			ipu_isys_csi2_error(pipe->csi2);

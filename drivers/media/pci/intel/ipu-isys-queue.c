@@ -430,6 +430,7 @@ void ipu_isys_buffer_list_to_ipu_fw_isys_frame_buff_set(
 			struct ipu_isys_buffer_list *bl)
 {
 	struct ipu_isys_buffer *ib;
+	struct ipu_isys_video *av = container_of(ip, struct ipu_isys_video, ip);
 
 	WARN_ON(!bl->nbufs);
 
@@ -446,12 +447,20 @@ void ipu_isys_buffer_list_to_ipu_fw_isys_frame_buff_set(
 	set->send_resp_eof = 0;
 #endif
 
+	dev_info(&av->isys->adev->dev,
+		 "[DEBUG] buffer_list_to_frame_buff_set: %u buffers, short_packet_output_pin=%u\n",
+		 bl->nbufs, ip->short_packet_output_pin);
+
 	list_for_each_entry(ib, &bl->head, head) {
 		if (ib->type == IPU_ISYS_VIDEO_BUFFER) {
 			struct vb2_buffer *vb =
 			    ipu_isys_buffer_to_vb2_buffer(ib);
 			struct ipu_isys_queue *aq =
 			    vb2_queue_to_ipu_isys_queue(vb->vb2_queue);
+
+			dev_info(&av->isys->adev->dev,
+				 "[DEBUG] buffer_list_to_frame_buff_set: VIDEO_BUFFER vb_idx=%u, fw_output=%u\n",
+				 vb->index, aq->fw_output);
 
 			if (aq->fill_frame_buff_set_pin)
 				aq->fill_frame_buff_set_pin(vb, set);
@@ -460,6 +469,10 @@ void ipu_isys_buffer_list_to_ipu_fw_isys_frame_buff_set(
 			    ipu_isys_buffer_to_private_buffer(ib);
 			struct ipu_fw_isys_output_pin_payload_abi *output_pin =
 			    &set->output_pins[ip->short_packet_output_pin];
+
+			dev_info(&av->isys->adev->dev,
+				 "[DEBUG] buffer_list_to_frame_buff_set: SHORT_PACKET at pin=%u, pb_idx=%u\n",
+				 ip->short_packet_output_pin, pb->index);
 
 			output_pin->addr = pb->dma_addr;
 			output_pin->out_buf_id = pb->index + 1;
@@ -546,8 +559,14 @@ static int ipu_isys_stream_start(struct ipu_isys_pipeline *ip,
 
 	mutex_lock(&pipe_av->isys->stream_mutex);
 
+	dev_info(&pipe_av->isys->adev->dev,
+		 "[DEBUG] stream_start: Starting stream, bl=%p, error=%d\n",
+		 bl, error);
+
 	rval = ipu_isys_video_set_streaming(pipe_av, 1, bl);
 	if (rval) {
+		dev_err(&pipe_av->isys->adev->dev,
+			"[DEBUG] stream_start: set_streaming failed: %d\n", rval);
 		mutex_unlock(&pipe_av->isys->stream_mutex);
 		goto out_requeue;
 	}
@@ -555,6 +574,9 @@ static int ipu_isys_stream_start(struct ipu_isys_pipeline *ip,
 	ip->streaming = 1;
 
 	dev_dbg(&pipe_av->isys->adev->dev, "dispatching queued requests\n");
+	dev_info(&pipe_av->isys->adev->dev,
+		 "[DEBUG] stream_start: dispatching requests, nr_output_pins=%u\n",
+		 ip->nr_output_pins);
 
 	while ((ireq = ipu_isys_next_queued_request(ip))) {
 		struct ipu_fw_isys_frame_buff_set_abi *set;
@@ -587,23 +609,45 @@ static int ipu_isys_stream_start(struct ipu_isys_pipeline *ip,
 
 	bl = &__bl;
 
+	dev_info(&pipe_av->isys->adev->dev,
+		 "[DEBUG] stream_start: Entering buffer dispatch loop\n");
+
 	do {
 		struct ipu_fw_isys_frame_buff_set_abi *buf = NULL;
 		struct isys_fw_msgs *msg;
 
+		dev_dbg(&pipe_av->isys->adev->dev,
+			"[DEBUG] stream_start: Calling buffer_list_get\n");
 		rval = buffer_list_get(ip, bl);
-		if (rval == -EINVAL)
+		if (rval == -EINVAL) {
+			dev_info(&pipe_av->isys->adev->dev,
+				 "[DEBUG] stream_start: buffer_list_get returned -EINVAL (no buffers?)\n");
 			goto out_requeue;
-		else if (rval < 0)
+		} else if (rval < 0) {
+			dev_info(&pipe_av->isys->adev->dev,
+				 "[DEBUG] stream_start: buffer_list_get returned %d, breaking\n",
+				 rval);
 			break;
+		}
+		dev_info(&pipe_av->isys->adev->dev,
+			 "[DEBUG] stream_start: buffer_list_get succeeded, nbufs=%u\n",
+			 bl->nbufs);
 
 		msg = ipu_get_fw_msg_buf(ip);
-		if (!msg)
+		if (!msg) {
+			dev_err(&pipe_av->isys->adev->dev,
+				"[DEBUG] stream_start: ipu_get_fw_msg_buf FAILED!\n");
 			/* TODO: PROPER CLEANUP */
 			return -ENOMEM;
+		}
+		dev_dbg(&pipe_av->isys->adev->dev,
+			"[DEBUG] stream_start: Got fw_msg_buf\n");
 
 		buf = to_frame_msg_buf(msg);
 
+		dev_info(&pipe_av->isys->adev->dev,
+			 "[DEBUG] stream_start: Configuring frame buffer set for %u buffers\n",
+			 bl->nbufs);
 		ipu_isys_buffer_list_to_ipu_fw_isys_frame_buff_set(buf, ip, bl);
 
 		ipu_fw_isys_dump_frame_buff_set(&pipe_av->isys->adev->dev, buf,
