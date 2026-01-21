@@ -275,17 +275,31 @@ const struct ipu_buttress_ctrl psys_buttress_ctrl = {
 
 #ifdef CONFIG_VIDEO_INTEL_IPU4P
 
+// /*
+//  * ipu4p available hw ports start from sip0 port3
+//  * available ports are:
+//  * s0p3, s1p0, s1p1, s1p2, s1p3
+//  */
+// static unsigned int ipu4p_csi_offsets[] = {
+// 	0x64300, 0x6c000, 0x6c100, 0x6c200, 0x6c300
+// };
+
 /*
- * ipu4p available hw ports start from sip0 port3
- * available ports are:
- * s0p3, s1p0, s1p1, s1p2, s1p3
+ * calculated using IPU_REG_ISYS_CSI_IRQ_CTRL_BASE(p) from ipu-platform-regs.h
  */
 static unsigned int ipu4p_csi_offsets[] = {
-	0x64300, 0x6c000, 0x6c100, 0x6c200, 0x6c300
+	0x6c400,  /* Port 0 - unused */
+	0x6cc00,  /* Port 1 - unused */
+	0x6d000,  /* Port 2 - unused */
+	0x6dc00,  /* Port 3 - rear camera (0x6cc00 + 0x800*2) */
+	0x6e400,  /* Port 4 - unused */
+	0x6ec00,  /* Port 5 - unused */
+	0x6f400,  /* Port 6 - IR camera (0x6cc00 + 0x800*5) */
+	0x6fc00   /* Port 7 - front camera (0x6cc00 + 0x800*6) */
 };
 
 static unsigned char ipu4p_csi_evlanecombine[] = {
-	0, 0, 0, 0, 0, 0
+	0, 0, 0, 0, 0, 0, 0, 0  /* No lane combining for any port */
 };
 
 static unsigned int ipu4p_tpg_offsets[] = {
