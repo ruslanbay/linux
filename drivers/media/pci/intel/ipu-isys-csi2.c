@@ -898,16 +898,20 @@ void ipu_isys_csi2_wait_last_eof(struct ipu_isys_csi2 *csi2)
 	}
 }
 
-struct ipu_isys_buffer *ipu_isys_csi2_get_short_packet_buffer(struct
-							      ipu_isys_pipeline
-							      *ip)
+struct ipu_isys_buffer *
+ipu_isys_csi2_get_short_packet_buffer(struct ipu_isys_pipeline *ip,
+				      struct ipu_isys_buffer_list *bl)
 {
 	struct ipu_isys_buffer *ib;
 	struct ipu_isys_private_buffer *pb;
 	struct ipu_isys_mipi_packet_header *ph;
+	unsigned long flags;
 
-	if (list_empty(&ip->short_packet_incoming))
+	spin_lock_irqsave(&ip->short_packet_queue_lock, flags);
+	if (list_empty(&ip->short_packet_incoming)) {
+		spin_unlock_irqrestore(&ip->short_packet_queue_lock, flags);
 		return NULL;
+	}
 	ib = list_last_entry(&ip->short_packet_incoming,
 			     struct ipu_isys_buffer, head);
 	pb = ipu_isys_buffer_to_private_buffer(ib);
@@ -919,5 +923,8 @@ struct ipu_isys_buffer *ipu_isys_csi2_get_short_packet_buffer(struct
 
 	dma_sync_single_for_cpu(&ip->isys->adev->dev, pb->dma_addr,
 				sizeof(*ph), DMA_BIDIRECTIONAL);
+	spin_unlock_irqrestore(&ip->short_packet_queue_lock, flags);
+	list_move(&ib->head, &bl->head);
+
 	return ib;
 }

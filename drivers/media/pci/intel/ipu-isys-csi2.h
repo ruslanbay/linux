@@ -158,7 +158,8 @@ int ipu_isys_csi2_init(struct ipu_isys_csi2 *csi2,
 		       void __iomem *base, unsigned int index);
 void ipu_isys_csi2_cleanup(struct ipu_isys_csi2 *csi2);
 struct ipu_isys_buffer *
-ipu_isys_csi2_get_short_packet_buffer(struct ipu_isys_pipeline *ip);
+ipu_isys_csi2_get_short_packet_buffer(struct ipu_isys_pipeline *ip,
+				      struct ipu_isys_buffer_list *bl);
 void ipu_isys_csi2_sof_event(struct ipu_isys_csi2 *csi2, unsigned int vc);
 void ipu_isys_csi2_eof_event(struct ipu_isys_csi2 *csi2, unsigned int vc);
 void ipu_isys_csi2_wait_last_eof(struct ipu_isys_csi2 *csi2);

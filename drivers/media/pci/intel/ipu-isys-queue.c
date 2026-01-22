@@ -391,19 +391,14 @@ static int buffer_list_get(struct ipu_isys_pipeline *ip,
 	/* Get short packet buffer. */
 	if (ip->interlaced && ip->isys->short_packet_source ==
 	    IPU_ISYS_SHORT_PACKET_FROM_RECEIVER) {
-		spin_lock_irqsave(&ip->short_packet_queue_lock, flags);
-		ib = ipu_isys_csi2_get_short_packet_buffer(ip);
+		ib = ipu_isys_csi2_get_short_packet_buffer(ip, bl);
 		if (!ib) {
-			spin_unlock_irqrestore(&ip->short_packet_queue_lock,
-					       flags);
 			ret = -ENODATA;
 			dev_err(&ip->isys->adev->dev,
 				"No more short packet buffers. Driver bug?");
 			WARN_ON(1);
 			goto error;
 		}
-		list_move(&ib->head, &bl->head);
-		spin_unlock_irqrestore(&ip->short_packet_queue_lock, flags);
 		bl->nbufs++;
 	}
 
