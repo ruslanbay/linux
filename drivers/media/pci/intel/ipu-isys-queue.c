@@ -346,6 +346,11 @@ static int buffer_list_get(struct ipu_isys_pipeline *ip,
 
 		spin_lock_irqsave(&aq->lock, flags);
 		if (list_empty(&aq->incoming)) {
+			/* DEBUG: Which queue is empty? */
+			dev_err(&ip->isys->adev->dev, 
+				"DEBUG: Queue '%s' is empty (no buffers queued from userspace)\n",
+				ipu_isys_queue_to_video(aq)->vdev.name);
+			
 			spin_unlock_irqrestore(&aq->lock, flags);
 			ret = -ENODATA;
 			goto error;
@@ -354,6 +359,11 @@ static int buffer_list_get(struct ipu_isys_pipeline *ip,
 		ib = list_last_entry(&aq->incoming,
 				     struct ipu_isys_buffer, head);
 		if (ib->req) {
+			/* DEBUG: Is there a Request API sync issue? */
+			dev_err(&ip->isys->adev->dev, 
+				"DEBUG: Buffer in queue '%s' has an active request (ib->req set)\n",
+				ipu_isys_queue_to_video(aq)->vdev.name);
+
 			spin_unlock_irqrestore(&aq->lock, flags);
 			ret = -ENODATA;
 			goto error;
