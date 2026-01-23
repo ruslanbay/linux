@@ -101,12 +101,20 @@ int ipu_isys_csi2_set_stream(struct v4l2_subdev *sd,
 	void __iomem *isys_base = isys->pdata->base;
 	unsigned int i;
 	u32 val, csi2part = 0;
+	unsigned int port_offset = 0;
 
-	dev_dbg(&csi2->isys->adev->dev, "csi2 s_stream %d\n", enable);
+	/* Get the port offset for debug logging */
+	if (csi2->index < isys->pdata->ipdata->csi2.nports)
+		port_offset = isys->pdata->ipdata->csi2.offsets[csi2->index];
+
+	dev_dbg(&csi2->isys->adev->dev, "csi2 s_stream %d, port %d\n", enable, csi2->index);
+	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 port %d: base=0x%p, offset=0x%x, isys_base=0x%p\n",
+		csi2->index, csi2->base, port_offset, isys_base);
 	if (!enable) {
 		ipu_isys_csi2_error(csi2);
 
 		val = readl(csi2->base + CSI2_REG_CSI_RX_CONFIG);
+		dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d RX_CONFIG before: 0x%08x\n", csi2->index, val);
 		val &= ~(CSI2_CSI_RX_CONFIG_DISABLE_BYTE_CLK_GATING |
 			 CSI2_CSI_RX_CONFIG_RELEASE_LP11);
 		writel(val, csi2->base + CSI2_REG_CSI_RX_CONFIG);
@@ -127,7 +135,11 @@ int ipu_isys_csi2_set_stream(struct v4l2_subdev *sd,
 		return 0;
 	}
 
+	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d enabling with %u lanes\n", csi2->index, nlanes);
 	ipu4p_csi2_ev_correction_params(csi2, nlanes);
+
+	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d timing: ctermen=%u, csettle=%u, dtermen=%u, dsettle=%u\n",
+		csi2->index, timing.ctermen, timing.csettle, timing.dtermen, timing.dsettle);
 
 	writel(timing.ctermen,
 		   csi2->base + CSI2_REG_CSI_RX_DLY_CNT_TERMEN_CLANE);
@@ -144,11 +156,15 @@ int ipu_isys_csi2_set_stream(struct v4l2_subdev *sd,
 	}
 
 	val = readl(csi2->base + CSI2_REG_CSI_RX_CONFIG);
+	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d RX_CONFIG before enable: 0x%08x\n", csi2->index, val);
 	val |= CSI2_CSI_RX_CONFIG_DISABLE_BYTE_CLK_GATING |
 	    CSI2_CSI_RX_CONFIG_RELEASE_LP11;
 	writel(val, csi2->base + CSI2_REG_CSI_RX_CONFIG);
+	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d RX_CONFIG after enable: 0x%08x\n", csi2->index, val);
 
+	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d setting NOF_ENABLED_LANES to %u\n", csi2->index, nlanes);
 	writel(nlanes, csi2->base + CSI2_REG_CSI_RX_NOF_ENABLED_LANES);
+	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d setting RX_ENABLE\n", csi2->index);
 	writel(CSI2_CSI_RX_ENABLE_ENABLE,
 		   csi2->base + CSI2_REG_CSI_RX_ENABLE);
 
@@ -161,6 +177,7 @@ int ipu_isys_csi2_set_stream(struct v4l2_subdev *sd,
 #endif
 
 	/* Enable csi2 receiver error interrupts */
+	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d enabling CSI IRQ_CTRL\n", csi2->index);
 	writel(1, isys_base +
 		   IPU_REG_ISYS_CSI_IRQ_CTRL_BASE(csi2->index));
 	writel(0, isys_base +
