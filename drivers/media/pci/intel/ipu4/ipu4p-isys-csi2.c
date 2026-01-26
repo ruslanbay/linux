@@ -135,10 +135,10 @@ int ipu_isys_csi2_set_stream(struct v4l2_subdev *sd,
 		return 0;
 	}
 
-	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d enabling with %u lanes\n", csi2->index, nlanes);
+	dev_info(&csi2->isys->adev->dev, "[DATA_FLOW] csi2 port %d: ENABLING receiver with %u lanes\n", csi2->index, nlanes);
 	ipu4p_csi2_ev_correction_params(csi2, nlanes);
 
-	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d timing: ctermen=%u, csettle=%u, dtermen=%u, dsettle=%u\n",
+	dev_info(&csi2->isys->adev->dev, "[DATA_FLOW] csi2 port %d: timing params - ctermen=%u, csettle=%u, dtermen=%u, dsettle=%u\n",
 		csi2->index, timing.ctermen, timing.csettle, timing.dtermen, timing.dsettle);
 
 	writel(timing.ctermen,
@@ -156,15 +156,15 @@ int ipu_isys_csi2_set_stream(struct v4l2_subdev *sd,
 	}
 
 	val = readl(csi2->base + CSI2_REG_CSI_RX_CONFIG);
-	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d RX_CONFIG before enable: 0x%08x\n", csi2->index, val);
+	dev_info(&csi2->isys->adev->dev, "[DATA_FLOW] csi2 port %d RX_CONFIG before enable: 0x%08x\n", csi2->index, val);
 	val |= CSI2_CSI_RX_CONFIG_DISABLE_BYTE_CLK_GATING |
 	    CSI2_CSI_RX_CONFIG_RELEASE_LP11;
 	writel(val, csi2->base + CSI2_REG_CSI_RX_CONFIG);
-	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d RX_CONFIG after enable: 0x%08x\n", csi2->index, val);
+	dev_info(&csi2->isys->adev->dev, "[DATA_FLOW] csi2 port %d RX_CONFIG after enable: 0x%08x\n", csi2->index, val);
 
-	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d setting NOF_ENABLED_LANES to %u\n", csi2->index, nlanes);
+	dev_info(&csi2->isys->adev->dev, "[DATA_FLOW] csi2 port %d: setting NOF_ENABLED_LANES to %u\n", csi2->index, nlanes);
 	writel(nlanes, csi2->base + CSI2_REG_CSI_RX_NOF_ENABLED_LANES);
-	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d setting RX_ENABLE\n", csi2->index);
+	dev_info(&csi2->isys->adev->dev, "[DATA_FLOW] csi2 port %d: RX_ENABLE set, ready to receive data\n", csi2->index);
 	writel(CSI2_CSI_RX_ENABLE_ENABLE,
 		   csi2->base + CSI2_REG_CSI_RX_ENABLE);
 
@@ -177,7 +177,7 @@ int ipu_isys_csi2_set_stream(struct v4l2_subdev *sd,
 #endif
 
 	/* Enable csi2 receiver error interrupts */
-	dev_dbg(&csi2->isys->adev->dev, "[DEBUG] csi2 %d enabling CSI IRQ_CTRL\n", csi2->index);
+	dev_info(&csi2->isys->adev->dev, "[DATA_FLOW] csi2 port %d: enabling CSI IRQ_CTRL for SOF/EOF detection\n", csi2->index);
 	writel(1, isys_base +
 		   IPU_REG_ISYS_CSI_IRQ_CTRL_BASE(csi2->index));
 	writel(0, isys_base +
@@ -221,7 +221,7 @@ void ipu_isys_csi2_isr(struct ipu_isys_csi2 *csi2)
 			   IPU_REG_ISYS_CSI_IRQ_CTRL_BASE(bus) + 0x8);
 	writel(status, isys_base +
 		   IPU_REG_ISYS_CSI_IRQ_CTRL_BASE(bus) + 0xc);
-	dev_dbg(&isys->adev->dev, "csi %d irq_ctrl status 0x%x", bus, status);
+	dev_info(&isys->adev->dev, "[DATA_FLOW] CSI port %d irq_ctrl status 0x%x", bus, status);
 
 	if (!(status & BIT(0)))
 		return;
@@ -230,23 +230,31 @@ void ipu_isys_csi2_isr(struct ipu_isys_csi2 *csi2)
 			   IPU_REG_ISYS_CSI_IRQ_CTRL0_BASE(bus) + 0x8);
 	writel(status, isys_base +
 		   IPU_REG_ISYS_CSI_IRQ_CTRL0_BASE(bus) + 0xc);
-	dev_dbg(&isys->adev->dev, "csi %d irq_ctrl0 status 0x%x", bus, status);
+	dev_info(&isys->adev->dev, "[DATA_FLOW] CSI port %d irq_ctrl0 status 0x%x (SOF/EOF events)", bus, status);
 	/* register the csi sync error */
 	csi2->receiver_errors |= status & 0xffff;
 	/* handle sof and eof event */
 #ifdef IPU_VC_SUPPORT
 	for (i = 0; i < NR_OF_CSI2_VC; i++) {
-		if (status & CSI2_IRQ_FS_VC(i))
+		if (status & CSI2_IRQ_FS_VC(i)) {
+			dev_info(&isys->adev->dev, "[DATA_FLOW] CSI port %d VC%d: SOF (Start of Frame) detected", bus, i);
 			ipu_isys_csi2_sof_event(csi2, i);
+		}
 
-		if (status & CSI2_IRQ_FE_VC(i))
+		if (status & CSI2_IRQ_FE_VC(i)) {
+			dev_info(&isys->adev->dev, "[DATA_FLOW] CSI port %d VC%d: EOF (End of Frame) detected", bus, i);
 			ipu_isys_csi2_eof_event(csi2, i);
+		}
 	}
 #else
-	if (status & CSI2_IRQ_FS_VC)
+	if (status & CSI2_IRQ_FS_VC) {
+		dev_info(&isys->adev->dev, "[DATA_FLOW] CSI port %d: SOF (Start of Frame) detected - data arriving!", bus);
 		ipu_isys_csi2_sof_event(csi2);
-	if (status & CSI2_IRQ_FE_VC)
+	}
+	if (status & CSI2_IRQ_FE_VC) {
+		dev_info(&isys->adev->dev, "[DATA_FLOW] CSI port %d: EOF (End of Frame) detected - frame complete!", bus);
 		ipu_isys_csi2_eof_event(csi2);
+	}
 #endif
 }
 

@@ -1185,6 +1185,10 @@ static const u32 ov8865_mbus_codes[] = {
 };
 
 static const struct ov8865_register_value ov8865_init_sequence[] = {
+	/* Pad Output Enable - CRITICAL: Enable sensor output pads */
+	{ OV8865_PAD_OEN0_REG, 0x00 },
+	{ OV8865_PAD_OEN2_REG, 0x21 },
+
 	/* Analog */
 
 	{ 0x3604, 0x04 },
@@ -2652,15 +2656,15 @@ static int ov8865_s_stream(struct v4l2_subdev *subdev, int enable)
 	struct ov8865_state *state = &sensor->state;
 	int ret;
 
-	dev_info(sensor->dev, "[DEBUG] s_stream(%d) called\n", enable);
+	dev_info(sensor->dev, "[DATA_FLOW] Sensor: s_stream(%d) called\n", enable);
 
 	if (enable) {
 		ret = pm_runtime_resume_and_get(sensor->dev);
 		if (ret < 0) {
-			dev_err(sensor->dev, "[DEBUG] s_stream: pm_runtime_resume_and_get failed: %d\n", ret);
+			dev_err(sensor->dev, "[DATA_FLOW] Sensor: pm_runtime_resume_and_get failed: %d\n", ret);
 			return ret;
 		}
-		dev_info(sensor->dev, "[DEBUG] s_stream: pm_runtime_resume_and_get succeeded\n");
+		dev_info(sensor->dev, "[DATA_FLOW] Sensor: power enabled, starting pixel clock\n");
 	}
 
 	mutex_lock(&sensor->mutex);
@@ -2668,15 +2672,17 @@ static int ov8865_s_stream(struct v4l2_subdev *subdev, int enable)
 	mutex_unlock(&sensor->mutex);
 
 	if (ret) {
-		dev_err(sensor->dev, "[DEBUG] s_stream: ov8865_sw_standby failed: %d\n", ret);
+		dev_err(sensor->dev, "[DATA_FLOW] Sensor: sw_standby command failed: %d\n", ret);
 		return ret;
 	}
-	dev_info(sensor->dev, "[DEBUG] s_stream: ov8865_sw_standby succeeded, enable=%d\n", enable);
+	dev_info(sensor->dev, "[DATA_FLOW] Sensor: streaming=%d, pixel data now %s\n", enable, enable ? "ACTIVE" : "STOPPED");
 
 	state->streaming = !!enable;
 
-	if (!enable)
+	if (!enable) {
+		dev_info(sensor->dev, "[DATA_FLOW] Sensor: powering down\n");
 		pm_runtime_put(sensor->dev);
+	}
 
 	return 0;
 }
