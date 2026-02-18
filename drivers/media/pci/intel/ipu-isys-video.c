@@ -2040,6 +2040,10 @@ int ipu_isys_video_set_streaming(struct ipu_isys_video *av,
 		dev_err(dev, "s_stream %s (ext)\n", ip->external->entity->name);
 
 		if (ip->csi2) {
+			dev_dbg(dev,
+				"stream off ext: %s stream_count=%u remote_streams=%u\n",
+				ip->external->entity->name, ip->csi2->stream_count,
+				ip->csi2->remote_streams);
 			if (ip->csi2->stream_count == 1) {
 				v4l2_subdev_call(esd, video, s_stream, state);
 #if defined(CONFIG_VIDEO_INTEL_IPU4) || defined(CONFIG_VIDEO_INTEL_IPU4P)
@@ -2087,6 +2091,12 @@ int ipu_isys_video_set_streaming(struct ipu_isys_video *av,
 
 	/* Oh crap */
 	if (state) {
+		if (ip->csi2)
+			dev_dbg(dev,
+				"stream on pre-fw: source=%u stream_count=%u remote_streams=%u vc=%u stream_id=%u\n",
+				ip->source, ip->csi2->stream_count,
+				ip->csi2->remote_streams, ip->vc, ip->stream_id);
+
 		if (ipu_isys_csi2_skew_cal_required(ip->csi2) &&
 		    ip->csi2->remote_streams == ip->csi2->stream_count)
 			perform_skew_cal(ip);
@@ -2103,10 +2113,24 @@ int ipu_isys_video_set_streaming(struct ipu_isys_video *av,
 			ip->external->entity->name);
 
 		if (ip->csi2 &&
-		    ip->csi2->remote_streams == ip->csi2->stream_count)
+		    ip->csi2->remote_streams == ip->csi2->stream_count) {
+			dev_dbg(dev,
+				"stream on ext: calling s_stream(1) for %s (remote_streams=%u stream_count=%u)\n",
+				ip->external->entity->name,
+				ip->csi2->remote_streams, ip->csi2->stream_count);
 			rval = v4l2_subdev_call(esd, video, s_stream, state);
-		else if (!ip->csi2)
+		} else if (!ip->csi2) {
+			dev_dbg(dev,
+				"stream on ext: calling s_stream(1) for non-csi2 path %s\n",
+				ip->external->entity->name);
 			rval = v4l2_subdev_call(esd, video, s_stream, state);
+		} else {
+			dev_warn(dev,
+				"stream on ext: SKIP s_stream(1) for %s due to remote_streams(%u) != stream_count(%u), source=%u vc=%u stream_id=%u\n",
+				ip->external->entity->name,
+				ip->csi2->remote_streams, ip->csi2->stream_count,
+				ip->source, ip->vc, ip->stream_id);
+		}
 		if (rval)
 			goto out_media_entity_stop_streaming_firmware;
 	} else {
