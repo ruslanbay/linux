@@ -1924,6 +1924,7 @@ int ipu_isys_video_prepare_streaming(struct ipu_isys_video *av,
 	ip->nr_queues = 0;
 	ip->external = NULL;
 	atomic_set(&ip->sequence, 0);
+	atomic_set(&ip->frames_done, 0);
 	ip->isl_mode = IPU_ISL_OFF;
 
 	for (i = 0; i < IPU_NUM_CAPTURE_DONE; i++)

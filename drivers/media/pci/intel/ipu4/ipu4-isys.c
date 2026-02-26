@@ -144,35 +144,120 @@ static void ipu4p_isys_irq_cfg(struct ipu_isys *isys)
 	writel(0, base + IPU_REG_ISYS_UNISPART_SW_IRQ_MUX_REG);
 }
 
+/*
+ * The builtin bbconfig below configures the PHY building blocks for
+ * bbs 4/6 and 12/14 only. On Surface Pro 7 the front ov5693 (sip1
+ * port 1, x2) appears to sit on bbs that are not in the list, so its
+ * analog front end never gets configured and the receiver sees no HS
+ * traffic. Allow extra bbs to be configured at runtime; consulted on
+ * every isys resume (i.e. after each power island cycle), e.g.:
+ *   echo 8,10 > /sys/module/intel_ipu4p_isys/parameters/phy_bb_extra
+ * then cycle the island and retry the capture.
+ */
+static int phy_bb_extra[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+module_param_array(phy_bb_extra, int, NULL, 0644);
+MODULE_PARM_DESC(phy_bb_extra,
+		 "Extra PHY building blocks to configure (-1 = none)");
+
+static int phy_afe_extra[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+module_param_array(phy_afe_extra, int, NULL, 0644);
+MODULE_PARM_DESC(phy_afe_extra,
+		 "AFE config value per extra bb (-1 = alternate 0xf/0x15)");
+
+static bool phy_jsl_bits;
+module_param(phy_jsl_bits, bool, 0644);
+MODULE_PARM_DESC(phy_jsl_bits,
+		 "Also set JSL-style CPHY_RX_CONTROL1/DPHY_CFG bits on all bbs");
+
+static void ipu4p_isys_bb_cfg_one(struct ipu_isys *isys, unsigned int bb,
+				  unsigned int crc, unsigned int drc,
+				  unsigned int afe)
+{
+	void __iomem *isp_base = isys->adev->isp->base;
+	u32 val;
+
+	val = readl(isp_base + BUTTRESS_REG_CPHYX_DLL_OVRD(bb));
+	val &= ~0x7e;
+	val |= crc << 1;
+	val |= 1;
+	writel(val, isp_base + BUTTRESS_REG_CPHYX_DLL_OVRD(bb));
+	val = readl(isp_base + BUTTRESS_REG_DPHYX_DLL_OVRD(bb));
+	val |= 1;
+	val |= drc << 1;
+	writel(val, isp_base + BUTTRESS_REG_DPHYX_DLL_OVRD(bb));
+	val = afe | (2 << 29);
+	writel(val, isp_base + BUTTRESS_REG_BBX_AFE_CONFIG(bb));
+}
+
 static void ipu4p_isys_bb_cfg(struct ipu_isys *isys)
 {
 	void __iomem *isp_base = isys->adev->isp->base;
 	unsigned int i, val;
-	unsigned int bbconfig[4][4] = {
+	unsigned int bbconfig[5][4] = {
 		{4, 13, 32, 0xf},
 		{6, 13, 32, 0x15},
 		{12, 13, 32, 0xf},
 		{14, 13, 32, 0x15},
+		/*
+		 * Surface Pro 7: the front ov5693 (sip1, x2) sits on
+		 * building block 10, which the original list left
+		 * unconfigured — its AFE never powered up and the
+		 * receiver saw no HS traffic. AFE 0x15 matches the JSL
+		 * x2 value; verified stable (0 sync errors). Do NOT
+		 * configure bb 8 the same way: it injects DPHY sync
+		 * errors on bb 10 (bb 8 is likely the ov7251 IR lane).
+		 */
+		{10, 13, 32, 0x15},
 	};
 
 	/* Config building block */
-	for (i = 0; i < 4; i++) {
-		unsigned int bb = bbconfig[i][0];
-		unsigned int crc = bbconfig[i][1];
-		unsigned int drc = bbconfig[i][2];
-		unsigned int afe = bbconfig[i][3];
+	for (i = 0; i < ARRAY_SIZE(bbconfig); i++)
+		ipu4p_isys_bb_cfg_one(isys, bbconfig[i][0], bbconfig[i][1],
+				      bbconfig[i][2], bbconfig[i][3]);
 
-		val = readl(isp_base + BUTTRESS_REG_CPHYX_DLL_OVRD(bb));
-		val &= ~0x7e;
-		val |= crc << 1;
-		val |= 1;
-		writel(val, isp_base + BUTTRESS_REG_CPHYX_DLL_OVRD(bb));
-		val = readl(isp_base + BUTTRESS_REG_DPHYX_DLL_OVRD(bb));
-		val |= 1;
-		val |= drc << 1;
-		writel(val, isp_base + BUTTRESS_REG_DPHYX_DLL_OVRD(bb));
-		val = afe | (2 << 29);
-		writel(val, isp_base + BUTTRESS_REG_BBX_AFE_CONFIG(bb));
+	for (i = 0; i < ARRAY_SIZE(phy_bb_extra); i++) {
+		int bb = phy_bb_extra[i];
+		unsigned int afe;
+
+		if (bb < 0)
+			continue;
+		afe = phy_afe_extra[i] >= 0 ? phy_afe_extra[i] :
+			((i & 1) ? 0x15 : 0xf);
+		dev_info(&isys->adev->dev,
+			 "phy: extra bb %d cfg, afe 0x%x\n", bb, afe);
+		ipu4p_isys_bb_cfg_one(isys, bb, 13, 32, afe);
+	}
+
+	if (phy_jsl_bits) {
+		dev_info(&isys->adev->dev, "phy: applying JSL-style bits\n");
+		for (i = 0; i < 16; i += 2) {
+			val = readl(isp_base +
+				    BUTTRESS_REG_CPHYX_RX_CONTROL1(i));
+			val |= BIT(31);
+			writel(val, isp_base +
+			       BUTTRESS_REG_CPHYX_RX_CONTROL1(i));
+			/*
+			 * DPHY_CFG is 4 bytes below DPHY_DLL_OVRD (0x148 vs
+			 * 0x14c); no dedicated macro exists in the header.
+			 */
+			val = readl(isp_base +
+				    BUTTRESS_REG_DPHYX_DLL_OVRD(i) - 4);
+			val |= BIT(25) | BIT(26);
+			writel(val, isp_base +
+			       BUTTRESS_REG_DPHYX_DLL_OVRD(i) - 4);
+		}
+	}
+
+	/* Log full PHY bb state to aid bring-up diagnosis */
+	for (i = 0; i < 16; i += 2) {
+		dev_dbg(&isys->adev->dev,
+			"phy bb %u: cphy_dll=0x%x rx_ctrl1=0x%x dphy_cfg=0x%x dphy_dll=0x%x afe=0x%x\n",
+			i,
+			readl(isp_base + BUTTRESS_REG_CPHYX_DLL_OVRD(i)),
+			readl(isp_base + BUTTRESS_REG_CPHYX_RX_CONTROL1(i)),
+			readl(isp_base + BUTTRESS_REG_DPHYX_DLL_OVRD(i) - 4),
+			readl(isp_base + BUTTRESS_REG_DPHYX_DLL_OVRD(i)),
+			readl(isp_base + BUTTRESS_REG_BBX_AFE_CONFIG(i)));
 	}
 }
 
