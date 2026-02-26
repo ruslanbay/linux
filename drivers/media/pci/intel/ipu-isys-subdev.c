@@ -817,7 +817,12 @@ int ipu_isys_subdev_link_validate(struct v4l2_subdev *sd,
 		 * sub-device.
 		 */
 		ip->external = link->source;
-		ip->source = to_ipu_isys_subdev(sd)->source;
+		if (!strncmp(sd->entity.name,
+			     IPU_ISYS_ENTITY_PREFIX " CSI-2 ",
+			     strlen(IPU_ISYS_ENTITY_PREFIX " CSI-2 ")))
+			ip->source = ipu_isys_csi2_get_fw_source(sd);
+		else
+			ip->source = to_ipu_isys_subdev(sd)->source;
 		dev_dbg(&asd->isys->adev->dev, "%s: using source %d\n",
 			sd->entity.name, ip->source);
 	} else if (source_sd->entity.num_pads == 1) {

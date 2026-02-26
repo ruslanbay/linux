@@ -22,6 +22,35 @@
 #define IPU_EOF_SEQID_TRACE
 #include "ipu-trace-event.h"
 
+/*
+ * The IPU4P fw stream source ids for the CSI-2 receivers are not
+ * contiguous and the builtin mapping (see ipu_isys_csi2_init) is a
+ * best guess for this hardware. Allow overriding it at runtime
+ * (consulted at every stream start) so alternative mappings can be
+ * tested without reloading the module:
+ *   echo -1,-1,6 > /sys/module/intel_ipu4p_isys/parameters/csi2_fw_src
+ */
+static int csi2_fw_src[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+module_param_array(csi2_fw_src, int, NULL, 0644);
+MODULE_PARM_DESC(csi2_fw_src,
+		 "Override ISYS fw stream source per CSI-2 index (-1 = builtin mapping)");
+
+unsigned int ipu_isys_csi2_get_fw_source(struct v4l2_subdev *sd)
+{
+	struct ipu_isys_csi2 *csi2 = to_ipu_isys_csi2(sd);
+
+	if (csi2->index < ARRAY_SIZE(csi2_fw_src) &&
+	    csi2_fw_src[csi2->index] >= 0) {
+		dev_info(&csi2->isys->adev->dev,
+			 "csi2-%u: fw source overridden to %d\n",
+			 csi2->index, csi2_fw_src[csi2->index]);
+		return IPU_FW_ISYS_STREAM_SRC_CSI2_PORT0 +
+			csi2_fw_src[csi2->index];
+	}
+
+	return csi2->asd.source;
+}
+
 static const u32 csi2_supported_codes_pad_sink[] = {
 	MEDIA_BUS_FMT_Y10_1X10,
 	MEDIA_BUS_FMT_RGB565_1X16,

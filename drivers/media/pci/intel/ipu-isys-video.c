@@ -341,6 +341,33 @@ static int video_release(struct file *file)
 	return ret;
 }
 
+const struct ipu_isys_pixelformat *
+ipu_isys_get_isys_format(u32 pixelformat, u32 type)
+{
+	const struct ipu_isys_pixelformat *default_pfmt = NULL;
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(ipu_isys_pfmts); i++) {
+		const struct ipu_isys_pixelformat *pfmt = &ipu_isys_pfmts[i];
+
+		if (type && ((!pfmt->is_meta &&
+			      type != V4L2_BUF_TYPE_VIDEO_CAPTURE) ||
+			     (pfmt->is_meta &&
+			      type != V4L2_BUF_TYPE_META_CAPTURE)))
+			continue;
+
+		if (!default_pfmt)
+			default_pfmt = pfmt;
+
+		if (pfmt->pixelformat != pixelformat)
+			continue;
+
+		return pfmt;
+	}
+
+	return default_pfmt;
+}
+
 static struct media_pad *other_pad(struct media_pad *pad)
 {
 	struct media_link *link;
@@ -750,53 +777,84 @@ static bool is_external(struct ipu_isys_video *av, struct media_entity *entity)
 static int link_validate(struct media_link *link)
 {
 	struct ipu_isys_video *av =
-	    container_of(link->sink, struct ipu_isys_video, pad);
-	/* All sub-devices connected to a video node are ours. */
-	struct ipu_isys_pipeline *ip =
-		to_ipu_isys_pipeline(media_entity_pipeline(&av->vdev.entity));
-	struct v4l2_subdev_route r[IPU_ISYS_MAX_STREAMS];
-	struct v4l2_subdev_routing routing = {
-		.routes = r,
-		.num_routes = IPU_ISYS_MAX_STREAMS,
-	};
-	int i, rval, active = 0;
-	struct v4l2_subdev *sd;
+		container_of(link->sink, struct ipu_isys_video, pad);
+	struct device *dev = &av->isys->adev->dev;
+	struct media_pipeline *mp;
+	struct v4l2_subdev_state *s_state;
+	struct v4l2_subdev *s_sd;
+	struct v4l2_mbus_framefmt *s_fmt;
+	struct media_pad *s_pad;
+	u32 s_stream, code;
+	int ret = -EPIPE;
 
 	if (!link->source->entity)
-		return -EINVAL;
-	sd = media_entity_to_v4l2_subdev(link->source->entity);
-	if (is_external(av, link->source->entity)) {
-		ip->external = media_pad_remote_pad_first(av->vdev.entity.pads);
-		ip->source = to_ipu_isys_subdev(sd)->source;
+		return ret;
+
+	s_sd = media_entity_to_v4l2_subdev(link->source->entity);
+
+	dev_dbg(dev, "validating link \"%s\":%u -> \"%s\"\n",
+		link->source->entity->name, link->source->index,
+		link->sink->entity->name);
+
+	/*
+	 * If the source feeding this video node is an external entity
+	 * or an Iunit TPG, it is the pipeline's frame source: record
+	 * it so prepare_streaming can configure the ISYS fw stream.
+	 * (For sensor pipelines the CSI-2 subdev's link_validate does
+	 * this; a TPG connects straight to its capture node, so this
+	 * is the only link validation that sees it.)
+	 */
+	mp = media_entity_pipeline(&av->vdev.entity);
+	if (mp && is_external(av, link->source->entity)) {
+		struct ipu_isys_pipeline *ip = to_ipu_isys_pipeline(mp);
+
+		if (!ip->external) {
+			ip->external =
+				media_pad_remote_pad_first(av->vdev.entity.pads);
+			ip->source = to_ipu_isys_subdev(s_sd)->source;
+			dev_dbg(dev, "%s: using source %d\n",
+				av->vdev.entity.name, ip->source);
+		}
 	}
 
-	rval = v4l2_subdev_call(sd, pad, get_routing, &routing);
-	if (rval)
-		goto err_subdev;
+	s_pad = media_pad_remote_pad_first(&av->pad);
+	s_stream = ipu_isys_get_src_stream_by_src_pad(s_sd, s_pad->index);
 
-	for (i = 0; i < routing.num_routes; i++) {
-		if (!(r[i].flags & V4L2_SUBDEV_ROUTE_FL_ACTIVE))
-			continue;
-
-		if (r[i].source_pad == link->source->index)
-			ip->stream_id = r[i].sink_stream;
-
-		active++;
+	s_state = v4l2_subdev_get_unlocked_active_state(s_sd);
+	if (s_state) {
+		v4l2_subdev_lock_state(s_state);
+		s_fmt = v4l2_subdev_state_get_format(s_state, s_pad->index,
+						     s_stream);
+		v4l2_subdev_unlock_state(s_state);
+	} else {
+		s_fmt = NULL;
 	}
 
-	if (ip->external) {
-		struct v4l2_mbus_frame_desc desc = {
-			.num_entries = V4L2_FRAME_DESC_ENTRY_MAX,
-		};
+	if (!s_fmt) {
+		/*
+		 * The subdev has no V4L2 active state (IPU4 manages formats
+		 * internally), or the state accessor returned NULL for a
+		 * stream-aware subdev without routing. Fall back to the
+		 * subdev's internal active format.
+		 */
+		struct ipu_isys_subdev *asd = to_ipu_isys_subdev(s_sd);
 
-		sd = media_entity_to_v4l2_subdev(ip->external->entity);
-		rval = ipu_isys_subdev_get_frame_desc(sd, &desc);
-		if (!rval && ip->stream_id < desc.num_entries)
-			ip->vc = desc.entry[ip->stream_id].bus.csi2.vc;
+		dev_dbg(dev, "using internal format for pad %u stream %u\n",
+			s_pad->index, s_stream);
+		s_fmt = &asd->ffmt[s_pad->index][s_stream];
 	}
 
-err_subdev:
-	ip->nr_queues++;
+	code = ipu_isys_get_isys_format(ipu_isys_get_format(av), 0)->code;
+
+	if (s_fmt->width != ipu_isys_get_frame_width(av) ||
+	    s_fmt->height != ipu_isys_get_frame_height(av) ||
+	    s_fmt->code != code) {
+		dev_dbg(dev, "format mismatch %dx%d,%x != %dx%d,%x\n",
+			s_fmt->width, s_fmt->height, s_fmt->code,
+			ipu_isys_get_frame_width(av),
+			ipu_isys_get_frame_height(av), code);
+		return ret;
+	}
 
 	return 0;
 }
@@ -1008,8 +1066,15 @@ static bool is_support_vc(struct media_pad *source_pad,
 	struct v4l2_query_ext_ctrl qm_ctrl = {
 		.id = V4L2_CID_IPU_QUERY_SUB_STREAM, };
 	int i;
+	/*
+	 * Walking pads[0] upstream can ping-pong between a video node and
+	 * a subdev that never matches (e.g. TPG <-> TPG capture), so bound
+	 * the walk to keep pipelines without a CSI-2 entity from spinning.
+	 */
+	int depth = MEDIA_ENTITY_ENUM_MAX_DEPTH;
 
-	while ((remote_pad =
+	while (depth-- > 0 &&
+	       (remote_pad =
 		media_pad_remote_pad_first(&remote_pad->entity->pads[0])
 		)) {
 		/* Non-subdev nodes can be safely ignored here. */
@@ -1064,8 +1129,10 @@ static int ipu_isys_query_sensor_info(struct media_pad *source_pad,
 	struct media_pad *extern_pad = NULL;
 	struct v4l2_subdev *sd = NULL;
 	struct v4l2_querymenu qm = {.id = V4L2_CID_IPU_QUERY_SUB_STREAM, };
+	int depth = MEDIA_ENTITY_ENUM_MAX_DEPTH;
 
-	while ((remote_pad =
+	while (depth-- > 0 &&
+	       (remote_pad =
 		media_pad_remote_pad_first(&remote_pad->entity->pads[0])
 		)) {
 		/* Non-subdev nodes can be safely ignored here. */

@@ -153,6 +153,7 @@ struct ipu_isys_csi2_monitor_message {
 					struct ipu_isys_csi2, asd)
 
 int ipu_isys_csi2_get_link_freq(struct ipu_isys_csi2 *csi2, __s64 *link_freq);
+unsigned int ipu_isys_csi2_get_fw_source(struct v4l2_subdev *sd);
 int ipu_isys_csi2_init(struct ipu_isys_csi2 *csi2,
 		       struct ipu_isys *isys,
 		       void __iomem *base, unsigned int index);
