@@ -283,6 +283,25 @@ static struct ipu_isys_pixelformat csi2_meta_pfmts[] = {
 
 #define DIV_SHIFT	8
 
+/*
+ * The calculation below uses the spec-minimum A/B coefficients. On
+ * Surface Pro 7 the front ov5693 (419.2 MHz, x2) misses the initial
+ * SOT sync on roughly half the stream starts with the minimum values
+ * (one missed sync = non-recoverable, the whole stream storms with
+ * irq_ctrl0 status 0x400), while the rear ov8865 at 360 MHz x4 is
+ * stable. Allow overriding the settle counts at runtime to place them
+ * mid-window, e.g.:
+ *   echo 880 > /sys/module/intel_ipu4p_isys/parameters/csi2_dsettle
+ * Consulted at every stream start; -1 = use the calculated minimum.
+ */
+static int csi2_csettle = -1;
+module_param(csi2_csettle, int, 0644);
+MODULE_PARM_DESC(csi2_csettle, "Override clock-lane settle count (-1 = calc)");
+
+static int csi2_dsettle = -1;
+module_param(csi2_dsettle, int, 0644);
+MODULE_PARM_DESC(csi2_dsettle, "Override data-lane settle count (-1 = calc)");
+
 static uint32_t calc_timing(s32 a, int32_t b, int64_t link_freq, int32_t accinv)
 {
 	return accinv * a + (accinv * b * (500000000 >> DIV_SHIFT)
@@ -317,6 +336,17 @@ ipu_isys_csi2_calc_timing(struct ipu_isys_csi2 *csi2,
 				      link_freq, accinv);
 	dev_dbg(&csi2->isys->adev->dev, "dtermen %u\n", timing->dtermen);
 	dev_dbg(&csi2->isys->adev->dev, "dsettle %u\n", timing->dsettle);
+
+	if (csi2_csettle >= 0) {
+		dev_info(&csi2->isys->adev->dev, "csettle override %u -> %d\n",
+			 timing->csettle, csi2_csettle);
+		timing->csettle = csi2_csettle;
+	}
+	if (csi2_dsettle >= 0) {
+		dev_info(&csi2->isys->adev->dev, "dsettle override %u -> %d\n",
+			 timing->dsettle, csi2_dsettle);
+		timing->dsettle = csi2_dsettle;
+	}
 
 	return 0;
 }
