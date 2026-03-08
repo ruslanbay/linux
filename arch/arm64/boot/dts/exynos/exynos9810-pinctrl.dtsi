@@ -572,6 +572,30 @@
 		interrupt-controller;
 		#interrupt-cells = <2>;
 	};
+
+	fimc_is_mclk0_fn: fimc-is-mclk0-fn-pins {
+		samsung,pins = "gpc1-4";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+	};
+
+	fimc_is_mclk1_fn: fimc-is-mclk1-fn-pins {
+		samsung,pins = "gpc1-5";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+	};
+
+	fimc_is_mclk2_fn: fimc-is-mclk2-fn-pins {
+		samsung,pins = "gpc1-6";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+	};
+
+	fimc_is_mclk3_fn: fimc-is-mclk3-fn-pins {
+		samsung,pins = "gpc1-7";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+	};
 };
 
 &pinctrl_vts {

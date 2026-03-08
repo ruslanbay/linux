@@ -313,6 +313,26 @@
 			};
 		};
 
+		usi_hsi2c_11: usi@108e00c0 {
+			compatible = "samsung,exynos850-usi";
+			reg = <0x108e00c0 0x20>;
+			samsung,mode = <USI_MODE_I2C>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+			status = "disabled";
+
+			hsi2c_11: i2c@108e0000 {
+				compatible = "samsung,exynos850-hsi2c",
+					     "samsung,exynosautov9-hsi2c";
+				reg = <0x108e0000 0xc0>;
+				interrupts = <GIC_SPI 432 IRQ_TYPE_LEVEL_HIGH>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+				status = "disabled";
+			};
+		};
+
 		usi_hsi2c_43: usi@143500c0 {
 			compatible = "samsung,exynos850-usi";
 			reg = <0x143500c0 0x20>;

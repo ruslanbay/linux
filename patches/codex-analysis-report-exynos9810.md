@@ -232,8 +232,11 @@ The list below is intentionally split into small upstreamable units.
     - Upstream binding-based host-wake/reset wiring and power sequencing.
 
 ### Optional later series (only if binding+driver support is ready)
-20. Camera/ISP topology incrementally.
-21. Extra sensors (e.g., LSM6DSx-class IMU path if component is confirmed).
-22. Non-essential board peripherals (fingerprint/NFC variants) with confirmed upstream bindings.
+- [x] **`arm64: dts: exynos: add Exynos9810 optional HSI2C bus for aux devices`**
+  - Add an additional disabled-first HSI2C controller block used as a carrier for optional peripherals.
+- [x] **`arm64: dts: exynos: add starlte optional IMU/NFC nodes`**
+  - Add disabled optional ST LSM6DSx IMU path and Samsung S3FWRN5 NFC path using upstream bindings.
+- [x] **`arm64: dts: exynos: add starlte camera clock pinctrl groundwork`**
+  - Add camera MCLK-related pinctrl states as incremental camera topology groundwork without vendor-only camera stack nodes.
 
 This structure should make rebasing easier and reduce review friction by keeping each patch narrowly scoped.

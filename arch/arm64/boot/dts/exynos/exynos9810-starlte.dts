@@ -186,6 +186,34 @@
 	};
 };
 
+&hsi2c_11 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	nfc@27 {
+		compatible = "samsung,s3fwrn5-i2c";
+		reg = <0x27>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&nfc_irq &nfc_en &nfc_wake>;
+		interrupt-parent = <&gpa1>;
+		interrupts = <2 IRQ_TYPE_EDGE_RISING>;
+		en-gpios = <&gpc1 3 GPIO_ACTIVE_HIGH>;
+		wake-gpios = <&gpc1 1 GPIO_ACTIVE_HIGH>;
+		status = "disabled";
+	};
+
+	imu@6a {
+		compatible = "st,lsm6dsl";
+		reg = <0x6a>;
+		interrupt-parent = <&gpa1>;
+		interrupts = <1 IRQ_TYPE_EDGE_RISING>;
+		vdd-supply = <&reg_placeholder>;
+		vddio-supply = <&reg_placeholder>;
+		status = "disabled";
+	};
+};
+
 &hsi2c_44 {
 	#address-cells = <1>;
 	#size-cells = <0>;
@@ -357,6 +385,43 @@
 	ts_int: ts-int-pins {
 		samsung,pins = "gpa1-0";
 		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
+	};
+
+	nfc_irq: nfc-irq-pins {
+		samsung,pins = "gpa1-2";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
+	};
+};
+
+&pinctrl_peric1 {
+	nfc_en: nfc-en-pins {
+		samsung,pins = "gpc1-3";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
+	};
+
+	nfc_wake: nfc-wake-pins {
+		samsung,pins = "gpc1-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
+	};
+
+	cam_mclk0: cam-mclk0-pins {
+		samsung,pins = "gpc1-4";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
+	};
+
+	cam_mclk1: cam-mclk1-pins {
+		samsung,pins = "gpc1-5";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
 		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
 	};
