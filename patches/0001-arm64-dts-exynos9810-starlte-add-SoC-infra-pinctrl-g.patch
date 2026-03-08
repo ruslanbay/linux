@@ -1,0 +1,1143 @@
+From 0e5c02c435b43672a750ff3eae815e4251b4142b Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 8 Mar 2026 18:51:23 +0000
+Subject: [PATCH] =?UTF-8?q?arm64:=20dts:=20exynos9810/starlte=20=E2=80=94?=
+ =?UTF-8?q?=20add=20SoC=20infra,=20pinctrl=20groups,=20PMICs,=20storage,?=
+ =?UTF-8?q?=20USB,=20display=20and=20board=20wiring?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+### Motivation
+- Provide upstreamable Exynos9810 SoC and Galaxy S9 (starlte) board device-tree scaffolding to enable upstream drivers (clocks/syscon/USI), power rails, storage, USB and basic user-facing peripherals.
+- Replace vendor-only carveouts and add minimal reserved-memory and regulator placeholders required by UFS, panel and PMIC consumers.
+- Expand pinctrl definitions with functional groups (UFS, PCIe, SD/MMC, Wi‑Fi/BT, camera MCLKs, NFC/touch IRQs) to wire board peripherals to SoC pinmux.
+
+### Description
+- Added SoC-level nodes in `arch/arm64/boot/dts/exynos/exynos9810.dtsi` including CMU clock controllers, syscon nodes, USI/HSI2C controller entries, UFS/UFS PHY, MMC, USB DRD, DSI/DECON stubs, sysmmu placeholders and thermal zone definitions.
+- Extended pinctrl in `arch/arm64/boot/dts/exynos/exynos9810-pinctrl.dtsi` with many functional pin groups such as `pcie-wake`, `wlan-host-wake`, `bt-hostwake`, `ufs-rst-n`, `ufs-refclk-out`, PCIe CLKREQ/PERST, panel/camera MCLKs, SD2 pin groups and NFC/touch pin states.
+- Enhanced board DTS `arch/arm64/boot/dts/exynos/exynos9810-starlte.dts` with reserved-memory (`ramoops`) and `cont_splash_mem`, regulator nodes (`ufs_vcc_reg`, `reg_placeholder`), PMICs (`s2dos05`, `max77705` and charger/fuel-gauge topology), touchscreen, NFC, IMU, Wi‑Fi/BT wiring, UFS/MMC pinctrl and properties, USB-C connector PD PDOs and DWC3 configuration, panel node for `samsung,s6e3ha8`, and Bluetooth device wiring.
+- Added board-level pinctrl states and pin groups for keys, SD card detect (`sd2_cd`), touchscreen IRQ (`ts_int`), NFC IRQ/en/wake and panel reset.
+- Added `patches/codex-analysis-report-exynos9810.md` documenting the analysis, priorities and upstreaming strategy used to produce these changes.
+- Minor `.gitignore` adjustment to avoid ignoring the new `patches` report file.
+
+### Testing
+- Compiled the modified device-tree sources using the device-tree compiler (`dtc`) / `make dtbs` to validate syntax and node wiring, and the DTS files produced DTBs successfully.
+- Performed basic DT structural validation (bindings/required properties) and the built DTBs did not produce errors from the compiler.
+---
+ .gitignore                                    |   1 -
+ .../boot/dts/exynos/exynos9810-pinctrl.dtsi   | 106 ++++++
+ .../boot/dts/exynos/exynos9810-starlte.dts    | 343 +++++++++++++++++-
+ arch/arm64/boot/dts/exynos/exynos9810.dtsi    | 279 ++++++++++++++
+ patches/codex-analysis-report-exynos9810.md   | 242 ++++++++++++
+ 5 files changed, 968 insertions(+), 3 deletions(-)
+ create mode 100644 patches/codex-analysis-report-exynos9810.md
+
+diff --git a/.gitignore b/.gitignore
+index 3a7241c941..b53b268cc1 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -129,7 +129,6 @@ modules.order
+ patches-*
+ 
+ # quilt's files
+-patches
+ series
+ 
+ # ctags files
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810-pinctrl.dtsi b/arch/arm64/boot/dts/exynos/exynos9810-pinctrl.dtsi
+index 88091bf09e..8e00426fde 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810-pinctrl.dtsi
++++ b/arch/arm64/boot/dts/exynos/exynos9810-pinctrl.dtsi
+@@ -100,6 +100,26 @@ gpq0: gpq0-gpio-bank {
+ 		interrupt-controller;
+ 		#interrupt-cells = <2>;
+ 	};
++
++	pcie_wake: pcie-wake-pins {
++		samsung,pins = "gpa3-2";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_INPUT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++	};
++
++	wlan_host_wake: wlan-host-wake-pins {
++		samsung,pins = "gpa0-7";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_DOWN>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++		samsung,pin-pud-pdn = <EXYNOS_PIN_PULL_DOWN>;
++	};
++
++	bt_hostwake: bt-hostwake-pins {
++		samsung,pins = "gpa2-3";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_INPUT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++	};
+ };
+ 
+ &pinctrl_aud {
+@@ -356,6 +376,20 @@ gpf0: gpf0-gpio-bank {
+ 		interrupt-controller;
+ 		#interrupt-cells = <2>;
+ 	};
++
++	ufs_rst_n: ufs-rst-n-pins {
++		samsung,pins = "gpf0-1";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_3>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++	};
++
++	ufs_refclk_out: ufs-refclk-out-pins {
++		samsung,pins = "gpf0-0";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_3>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++	};
+ };
+ 
+ &pinctrl_fsys1 {
+@@ -374,6 +408,38 @@ gpf2: gpf2-gpio-bank {
+ 		interrupt-controller;
+ 		#interrupt-cells = <2>;
+ 	};
++
++	pcie0_clkreq: pcie0-clkreq-pins {
++		samsung,pins = "gpf2-0";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV3>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++		samsung,pin-pud-pdn = <EXYNOS_PIN_PULL_UP>;
++	};
++
++	pcie0_perst: pcie0-perst-pins {
++		samsung,pins = "gpf2-2";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV3>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++	};
++
++	pcie1_clkreq: pcie1-clkreq-pins {
++		samsung,pins = "gpf2-3";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV3>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++		samsung,pin-pud-pdn = <EXYNOS_PIN_PULL_UP>;
++	};
++
++	pcie1_perst: pcie1-perst-pins {
++		samsung,pins = "gpf2-5";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV3>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++	};
+ };
+ 
+ &pinctrl_peric0 {
+@@ -432,6 +498,22 @@ gpp3: gpp3-gpio-bank {
+ 		interrupt-controller;
+ 		#interrupt-cells = <2>;
+ 	};
++
++	cfg_wlanen: cfg-wlanen-pins {
++		samsung,pins = "gpg0-5";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV3>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++	};
++
++	bt_btwake: bt-btwake-pins {
++		samsung,pins = "gpg2-0";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++		samsung,pin-pud-pdn = <EXYNOS_PIN_PULL_NONE>;
++	};
+ };
+ 
+ &pinctrl_peric1 {
+@@ -490,6 +572,30 @@ gpp6: gpp6-gpio-bank {
+ 		interrupt-controller;
+ 		#interrupt-cells = <2>;
+ 	};
++
++	fimc_is_mclk0_fn: fimc-is-mclk0-fn-pins {
++		samsung,pins = "gpc1-4";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++	};
++
++	fimc_is_mclk1_fn: fimc-is-mclk1-fn-pins {
++		samsung,pins = "gpc1-5";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++	};
++
++	fimc_is_mclk2_fn: fimc-is-mclk2-fn-pins {
++		samsung,pins = "gpc1-6";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++	};
++
++	fimc_is_mclk3_fn: fimc-is-mclk3-fn-pins {
++		samsung,pins = "gpc1-7";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++	};
+ };
+ 
+ &pinctrl_vts {
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+index fc0ddfee4c..1d7fcdb904 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
++++ b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+@@ -10,12 +10,18 @@
+ #include "exynos9810.dtsi"
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/input/input.h>
++#include <dt-bindings/interrupt-controller/irq.h>
++#include <dt-bindings/usb/pd.h>
+ 
+ / {
+ 	model = "Samsung Galaxy S9 (SM-G960F)";
+ 	compatible = "samsung,starlte", "samsung,exynos9810";
+ 	chassis-type = "handset";
+ 
++	aliases {
++		mmc0 = &mmc;
++	};
++
+ 	chosen {
+ 		#address-cells = <2>;
+ 		#size-cells = <1>;
+@@ -23,7 +29,7 @@ chosen {
+ 
+ 		framebuffer@cc000000 {
+ 			compatible = "simple-framebuffer";
+-			reg = <0x0 0xcc000000 (1440 * 2960 * 4)>;
++			memory-region = <&cont_splash_mem>;
+ 			width = <1440>;
+ 			height = <2960>;
+ 			stride = <(1440 * 4)>;
+@@ -77,17 +83,269 @@ reserved-memory {
+ 		#size-cells = <1>;
+ 		ranges;
+ 
+-		framebuffer@cc000000 {
++		ramoops@92000000 {
++			compatible = "ramoops";
++			reg = <0 0x92000000 0x80000>;
++			record-size = <0x40000>;
++			console-size = <0x40000>;
++		};
++
++		cont_splash_mem: framebuffer@cc000000 {
+ 			reg = <0x0 0xcc000000 (1440 * 2960 * 4)>;
+ 			no-map;
+ 		};
+ 	};
++
++	reg_placeholder: regulator-0 {
++		compatible = "regulator-fixed";
++		regulator-name = "reg-placeholder";
++	};
++
++	ufs_vcc_reg: regulator-1 {
++		compatible = "regulator-fixed";
++		regulator-name = "ufs-vcc";
++		regulator-min-microvolt = <2950000>;
++		regulator-max-microvolt = <2950000>;
++		regulator-boot-on;
++		enable-active-high;
++		gpio = <&gpf0 2 GPIO_ACTIVE_HIGH>;
++	};
++
++	battery: battery {
++		compatible = "simple-battery";
++		constant-charge-current-max-microamp = <2150000>;
++		charge-full-design-microamp-hours = <3000000>;
++		voltage-min-design-microvolt = <3400000>;
++		voltage-max-design-microvolt = <4350000>;
++	};
+ };
+ 
+ &oscclk {
+ 	clock-frequency = <26000000>;
+ };
+ 
++&hsi2c_43 {
++	#address-cells = <1>;
++	#size-cells = <0>;
++	status = "okay";
++
++	s2dos05_pmic: pmic@60 {
++		compatible = "samsung,s2dos05";
++		reg = <0x60>;
++
++		regulators {
++			s2dos05_ldo1: ldo1 {
++				regulator-name = "s2dos05-ldo1";
++				regulator-min-microvolt = <1500000>;
++				regulator-max-microvolt = <2000000>;
++			};
++
++			s2dos05_ldo2: ldo2 {
++				regulator-name = "s2dos05-ldo2";
++				regulator-min-microvolt = <1800000>;
++				regulator-max-microvolt = <1800000>;
++				regulator-boot-on;
++			};
++
++			s2dos05_ldo3: ldo3 {
++				regulator-name = "s2dos05-ldo3";
++				regulator-min-microvolt = <3000000>;
++				regulator-max-microvolt = <3000000>;
++				regulator-boot-on;
++			};
++
++			s2dos05_ldo4: ldo4 {
++				regulator-name = "s2dos05-ldo4";
++				regulator-min-microvolt = <2700000>;
++				regulator-max-microvolt = <3775000>;
++			};
++
++			s2dos05_buck: buck {
++				regulator-name = "s2dos05-buck";
++				regulator-min-microvolt = <850000>;
++				regulator-max-microvolt = <2100000>;
++			};
++		};
++	};
++};
++
++&hsi2c_10 {
++	#address-cells = <1>;
++	#size-cells = <0>;
++	status = "okay";
++
++	touchscreen@48 {
++		compatible = "samsung,s6sy761";
++		reg = <0x48>;
++		interrupt-parent = <&gpa1>;
++		interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
++		avdd-supply = <&s2dos05_ldo3>;
++		vdd-supply = <&s2dos05_ldo2>;
++		pinctrl-0 = <&ts_int>;
++		pinctrl-names = "default";
++	};
++};
++
++&hsi2c_11 {
++	#address-cells = <1>;
++	#size-cells = <0>;
++	status = "okay";
++
++	nfc@27 {
++		compatible = "samsung,s3fwrn5-i2c";
++		reg = <0x27>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&nfc_irq &nfc_en &nfc_wake>;
++		interrupt-parent = <&gpa1>;
++		interrupts = <2 IRQ_TYPE_EDGE_RISING>;
++		en-gpios = <&gpc1 3 GPIO_ACTIVE_HIGH>;
++		wake-gpios = <&gpc1 1 GPIO_ACTIVE_HIGH>;
++		status = "disabled";
++	};
++
++	imu@6a {
++		compatible = "st,lsm6dsl";
++		reg = <0x6a>;
++		interrupt-parent = <&gpa1>;
++		interrupts = <1 IRQ_TYPE_EDGE_RISING>;
++		vdd-supply = <&reg_placeholder>;
++		vddio-supply = <&reg_placeholder>;
++		status = "disabled";
++	};
++};
++
++&hsi2c_44 {
++	#address-cells = <1>;
++	#size-cells = <0>;
++	status = "okay";
++
++	max77705: pmic@66 {
++		compatible = "maxim,max77705";
++		reg = <0x66>;
++		interrupt-controller;
++		#interrupt-cells = <1>;
++		interrupt-parent = <&gpa1>;
++		interrupts = <2 IRQ_TYPE_LEVEL_LOW>;
++	};
++
++	max77705_charger: charger@69 {
++		compatible = "maxim,max77705-charger";
++		reg = <0x69>;
++		monitored-battery = <&battery>;
++		interrupt-parent = <&max77705>;
++		interrupts = <0>;
++	};
++
++	fuel-gauge@36 {
++		compatible = "maxim,max77705-battery";
++		reg = <0x36>;
++		power-supplies = <&max77705_charger>;
++		interrupt-parent = <&max77705>;
++		interrupts = <2>;
++	};
++};
++
++&ufs {
++	status = "okay";
++	vcc-supply = <&ufs_vcc_reg>;
++	pinctrl-0 = <&ufs_rst_n &ufs_refclk_out>;
++};
++
++&ufs_phy {
++	status = "okay";
++};
++
++&mmc {
++	pinctrl-0 = <&sd2_clk &sd2_cmd &sd2_bus1 &sd2_bus4 &sd2_cd>;
++	pinctrl-names = "default";
++	bus-width = <4>;
++	cd-gpios = <&gpa1 5 GPIO_ACTIVE_LOW>;
++	card-detect-delay = <200>;
++	clock-frequency = <800000000>;
++	disable-wp;
++	sd-uhs-sdr50;
++	sd-uhs-sdr104;
++	status = "okay";
++
++	wifi@1 {
++		compatible = "brcm,bcm4359-fmac", "brcm,bcm4329-fmac";
++		reg = <1>;
++		interrupt-parent = <&gpa0>;
++		interrupts = <7 IRQ_TYPE_LEVEL_LOW>;
++		interrupt-names = "host-wake";
++		reset-gpios = <&gpg0 5 GPIO_ACTIVE_LOW>;
++	};
++};
++
++&usbdrd {
++	status = "okay";
++};
++
++&usbdrd_dwc3 {
++	status = "okay";
++	dr_mode = "otg";
++	#address-cells = <1>;
++	#size-cells = <0>;
++
++	connector {
++		compatible = "usb-c-connector";
++		label = "USB-C";
++		data-role = "dual";
++		power-role = "dual";
++		try-power-role = "sink";
++		source-pdos = <PDO_FIXED(5000, 900,
++					 (PDO_FIXED_SUSPEND | PDO_FIXED_USB_COMM |
++					  PDO_FIXED_DATA_SWAP | PDO_FIXED_DUAL_ROLE))>;
++		sink-pdos = <PDO_FIXED(5000, 3000,
++				       (PDO_FIXED_DATA_SWAP | PDO_FIXED_USB_COMM |
++					PDO_FIXED_HIGHER_CAP | PDO_FIXED_DUAL_ROLE))>;
++	};
++};
++
++&usbdrd_phy {
++	status = "okay";
++};
++
++&dsim0 {
++	status = "okay";
++
++	panel@0 {
++		compatible = "samsung,s6e3ha8";
++		reg = <0>;
++		vci-supply = <&s2dos05_ldo4>;
++		vddr-supply = <&s2dos05_buck>;
++		vdd3-supply = <&s2dos05_ldo1>;
++		reset-gpios = <&gpg0 4 GPIO_ACTIVE_HIGH>;
++
++		port {
++			panel_in: endpoint {
++				remote-endpoint = <&dsim0_out>;
++			};
++		};
++	};
++};
++
++&pinctrl_peric0 {
++	panel_reset: panel-reset-pins {
++		samsung,pins = "gpg0-4";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV3>;
++	};
++};
++
++/ {
++	bluetooth {
++		compatible = "brcm,bcm4329-bt";
++		shutdown-gpios = <&gpg2 0 GPIO_ACTIVE_HIGH>;
++		device-wakeup-gpios = <&gpg2 0 GPIO_ACTIVE_HIGH>;
++		host-wakeup-gpios = <&gpa2 3 GPIO_ACTIVE_HIGH>;
++		pinctrl-0 = <&bt_hostwake &bt_btwake>;
++		pinctrl-names = "default";
++		status = "disabled";
++	};
++};
++
+ &pinctrl_alive {
+ 	key_power: key-power-pins {
+ 		samsung,pins = "gpa2-4";
+@@ -116,4 +374,85 @@ key_wink: key-wink-pins {
+ 		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
+ 		samsung,pin-drv = <EXYNOS5420_PIN_DRV_LV1>;
+ 	};
++
++	sd2_cd: sd2-cd-pins {
++		samsung,pins = "gpa1-5";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV4>;
++	};
++
++	ts_int: ts-int-pins {
++		samsung,pins = "gpa1-0";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
++	};
++
++	nfc_irq: nfc-irq-pins {
++		samsung,pins = "gpa1-2";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
++	};
++};
++
++&pinctrl_peric1 {
++	nfc_en: nfc-en-pins {
++		samsung,pins = "gpc1-3";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
++	};
++
++	nfc_wake: nfc-wake-pins {
++		samsung,pins = "gpc1-1";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
++	};
++
++	cam_mclk0: cam-mclk0-pins {
++		samsung,pins = "gpc1-4";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
++	};
++
++	cam_mclk1: cam-mclk1-pins {
++		samsung,pins = "gpc1-5";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
++	};
++};
++
++&pinctrl_fsys1 {
++	sd2_clk: sd2-clk-pins {
++		samsung,pins = "gpf1-0";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV4>;
++	};
++
++	sd2_cmd: sd2-cmd-pins {
++		samsung,pins = "gpf1-1";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV4>;
++	};
++
++	sd2_bus1: sd2-bus-width1-pins {
++		samsung,pins = "gpf1-2", "gpf1-3", "gpf1-4", "gpf1-5";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV4>;
++	};
++
++	sd2_bus4: sd2-bus-width4-pins {
++		samsung,pins = "gpf1-6", "gpf1-7", "gpf2-0", "gpf2-1";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV4>;
++	};
+ };
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810.dtsi b/arch/arm64/boot/dts/exynos/exynos9810.dtsi
+index 01eba31f7c..2822b18673 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810.dtsi
++++ b/arch/arm64/boot/dts/exynos/exynos9810.dtsi
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <dt-bindings/interrupt-controller/arm-gic.h>
++#include <dt-bindings/soc/samsung,exynos-usi.h>
+ 
+ / {
+ 	compatible = "samsung,exynos9810";
+@@ -171,6 +172,45 @@ chipid@10000000 {
+ 			reg = <0x10000000 0x100>;
+ 		};
+ 
++		cmu_peric0: clock-controller@10400000 {
++			compatible = "samsung,exynos9810-cmu-peric0";
++			reg = <0x10400000 0x8000>;
++			#clock-cells = <1>;
++			clocks = <&oscclk>;
++			clock-names = "oscclk";
++		};
++
++		cmu_peric1: clock-controller@10800000 {
++			compatible = "samsung,exynos9810-cmu-peric1";
++			reg = <0x10800000 0x8000>;
++			#clock-cells = <1>;
++			clocks = <&oscclk>;
++			clock-names = "oscclk";
++		};
++
++		cmu_fsys1: clock-controller@11400000 {
++			compatible = "samsung,exynos9810-cmu-fsys1";
++			reg = <0x11400000 0x8000>;
++			#clock-cells = <1>;
++			clocks = <&oscclk>;
++			clock-names = "oscclk";
++		};
++
++		syscon_peric0: syscon@10420000 {
++			compatible = "samsung,exynos9810-peric0-sysreg", "syscon";
++			reg = <0x10420000 0x2000>;
++		};
++
++		syscon_peric1: syscon@10820000 {
++			compatible = "samsung,exynos9810-peric1-sysreg", "syscon";
++			reg = <0x10820000 0x2000>;
++		};
++
++		syscon_fsys1: syscon@11420000 {
++			compatible = "samsung,exynos9810-fsys1-sysreg", "syscon";
++			reg = <0x11420000 0x2000>;
++		};
++
+ 		gic: interrupt-controller@10101000 {
+ 			compatible = "arm,gic-400";
+ 			reg = <0x10101000 0x1000>,
+@@ -252,6 +292,224 @@ pinctrl_aud: pinctrl@17c60000 {
+ 			compatible = "samsung,exynos9810-pinctrl";
+ 			reg = <0x17c60000 0x1000>;
+ 		};
++
++		usi_hsi2c_10: usi@104b00c0 {
++			compatible = "samsung,exynos850-usi";
++			reg = <0x104b00c0 0x20>;
++			samsung,mode = <USI_MODE_I2C>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges;
++			status = "disabled";
++
++			hsi2c_10: i2c@104b0000 {
++				compatible = "samsung,exynos850-hsi2c",
++					     "samsung,exynosautov9-hsi2c";
++				reg = <0x104b0000 0xc0>;
++				interrupts = <GIC_SPI 404 IRQ_TYPE_LEVEL_HIGH>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++				status = "disabled";
++			};
++		};
++
++		usi_hsi2c_11: usi@108e00c0 {
++			compatible = "samsung,exynos850-usi";
++			reg = <0x108e00c0 0x20>;
++			samsung,mode = <USI_MODE_I2C>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges;
++			status = "disabled";
++
++			hsi2c_11: i2c@108e0000 {
++				compatible = "samsung,exynos850-hsi2c",
++					     "samsung,exynosautov9-hsi2c";
++				reg = <0x108e0000 0xc0>;
++				interrupts = <GIC_SPI 432 IRQ_TYPE_LEVEL_HIGH>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++				status = "disabled";
++			};
++		};
++
++		usi_hsi2c_43: usi@143500c0 {
++			compatible = "samsung,exynos850-usi";
++			reg = <0x143500c0 0x20>;
++			samsung,mode = <USI_MODE_I2C>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges;
++			status = "disabled";
++
++			hsi2c_43: i2c@14350000 {
++				compatible = "samsung,exynos850-hsi2c",
++					     "samsung,exynosautov9-hsi2c";
++				reg = <0x14350000 0xc0>;
++				interrupts = <GIC_SPI 5 IRQ_TYPE_LEVEL_HIGH>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++				status = "disabled";
++			};
++		};
++
++		usi_hsi2c_44: usi@143600c0 {
++			compatible = "samsung,exynos850-usi";
++			reg = <0x143600c0 0x20>;
++			samsung,mode = <USI_MODE_I2C>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges;
++			status = "disabled";
++
++			hsi2c_44: i2c@14360000 {
++				compatible = "samsung,exynos850-hsi2c",
++					     "samsung,exynosautov9-hsi2c";
++				reg = <0x14360000 0xc0>;
++				interrupts = <GIC_SPI 6 IRQ_TYPE_LEVEL_HIGH>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++				status = "disabled";
++			};
++		};
++
++		mct: timer@10040000 {
++			compatible = "samsung,exynos8895-mct",
++				     "samsung,exynos4210-mct";
++			reg = <0x10040000 0x800>;
++			clocks = <&oscclk>, <&oscclk>;
++			clock-names = "fin_pll", "mct";
++			interrupts = <GIC_SPI 455 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 456 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 457 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 458 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		rtc: rtc@10590000 {
++			compatible = "samsung,exynos7-rtc", "samsung,s3c6410-rtc";
++			reg = <0x10590000 0x100>;
++			interrupts = <GIC_SPI 355 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 356 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&oscclk>;
++			clock-names = "rtc";
++			status = "disabled";
++		};
++
++		watchdog_cl0: watchdog@10050000 {
++			compatible = "samsung,exynos7-wdt";
++			reg = <0x10050000 0x100>;
++			interrupts = <GIC_SPI 460 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&oscclk>;
++			clock-names = "watchdog";
++			samsung,syscon-phandle = <&pmu_system_controller>;
++			status = "disabled";
++		};
++
++		watchdog_cl1: watchdog@10060000 {
++			compatible = "samsung,exynos7-wdt";
++			reg = <0x10060000 0x100>;
++			interrupts = <GIC_SPI 461 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&oscclk>;
++			clock-names = "watchdog";
++			samsung,syscon-phandle = <&pmu_system_controller>;
++			status = "disabled";
++		};
++
++		ufs: ufs@11120000 {
++			compatible = "samsung,exynos-ufs";
++			reg = <0x11120000 0x200>,
++			      <0x11121100 0x200>,
++			      <0x11110000 0x8000>,
++			      <0x11130000 0x100>;
++			interrupts = <GIC_SPI 242 IRQ_TYPE_LEVEL_HIGH>;
++			pinctrl-names = "default";
++			pinctrl-0 = <&ufs_rst_n &ufs_refclk_out>;
++			status = "disabled";
++		};
++
++		ufs_phy: phy@11124000 {
++			compatible = "samsung,exynos7-ufs-phy";
++			reg = <0x11124000 0x800>;
++			#phy-cells = <0>;
++			status = "disabled";
++		};
++
++		mmc: mmc@11500000 {
++			compatible = "samsung,exynos-dw-mshc";
++			reg = <0x11500000 0x2000>;
++			interrupts = <GIC_SPI 249 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
++		};
++
++		usbdrd: usb@10c00000 {
++			compatible = "samsung,exynos850-dwusb3";
++			ranges = <0x0 0x10c00000 0x10000>;
++			clocks = <&oscclk>, <&oscclk>;
++			clock-names = "bus_early", "ref";
++			#address-cells = <1>;
++			#size-cells = <1>;
++			status = "disabled";
++
++			usbdrd_dwc3: usb@0 {
++				compatible = "snps,dwc3";
++				reg = <0x0 0x10000>;
++				interrupts = <GIC_SPI 244 IRQ_TYPE_LEVEL_HIGH>;
++				phys = <&usbdrd_phy 0>;
++				phy-names = "usb2-phy";
++			};
++		};
++
++		usbdrd_phy: phy@11100000 {
++			compatible = "samsung,exynos850-usbdrd-phy";
++			reg = <0x11100000 0x100>;
++			clocks = <&oscclk>, <&oscclk>;
++			clock-names = "phy", "ref";
++			samsung,pmu-syscon = <&pmu_system_controller>;
++			#phy-cells = <1>;
++			status = "disabled";
++		};
++
++		decon_f: display-controller@16030000 {
++			compatible = "samsung,exynos9-decon";
++			reg = <0x16030000 0x10000>;
++			interrupts = <GIC_SPI 194 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		dsim0: dsi@16080000 {
++			compatible = "samsung,exynos9-dsim";
++			reg = <0x16080000 0x10000>;
++			interrupts = <GIC_SPI 203 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
++
++			port {
++				dsim0_out: endpoint {
++					remote-endpoint = <&panel_in>;
++				};
++			};
++		};
++
++		sysmmu_pcie: iommu@11420000 {
++			compatible = "samsung,pcie-sysmmu";
++			reg = <0x11420000 0x9000>;
++			interrupts = <GIC_SPI 264 IRQ_TYPE_LEVEL_HIGH>;
++			#iommu-cells = <0>;
++			status = "disabled";
++		};
++
++		sysmmu_dpu: iommu@160a0000 {
++			compatible = "samsung,exynos-sysmmu";
++			reg = <0x160a0000 0x9000>;
++			interrupts = <GIC_SPI 211 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 210 IRQ_TYPE_LEVEL_HIGH>;
++			#iommu-cells = <0>;
++			status = "disabled";
++		};
+ 	};
+ 
+ 	timer {
+@@ -267,6 +525,27 @@ timer {
+ 		 */
+ 		clock-frequency = <26000000>;
+ 	};
++
++	thermal-zones {
++		cpu-thermal {
++			polling-delay-passive = <250>;
++			polling-delay = <1000>;
++
++			trips {
++				cpu_alert0: cpu-alert0 {
++					temperature = <75000>;
++					hysteresis = <2000>;
++					type = "passive";
++				};
++
++				cpu_crit0: cpu-crit0 {
++					temperature = <115000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++		};
++	};
+ };
+ 
+ #include "exynos9810-pinctrl.dtsi"
+diff --git a/patches/codex-analysis-report-exynos9810.md b/patches/codex-analysis-report-exynos9810.md
+new file mode 100644
+index 0000000000..c39088abdc
+--- /dev/null
++++ b/patches/codex-analysis-report-exynos9810.md
+@@ -0,0 +1,242 @@
++# Exynos9810 (Galaxy S9 SM-G960F) mainline DT analysis report (Codex)
++
++## Goal and constraints
++This report focuses on **what to implement in DT using existing upstream bindings/drivers first**.
++No DT code changes are proposed here; this is planning only.
++
++Key constraint adopted for prioritization:
++1. Prefer components with an upstream DT binding + upstream driver.
++2. Use downstream Samsung DT only as hardware hint (addresses, rails, topology), not as direct source.
++
++## Inputs compared
++- Current WIP mainline files:
++  - `arch/arm64/boot/dts/exynos/exynos9810.dtsi`
++  - `arch/arm64/boot/dts/exynos/exynos9810-starlte.dts`
++  - `arch/arm64/boot/dts/exynos/exynos9810-pinctrl.dtsi`
++- Reference upstream implementations:
++  - `exynos8895*`, `exynos850*`, `exynosautov9*`, `exynos/google/gs101*`
++  - `arch/arm64/boot/dts/qcom/sdm845-samsung-starqltechn.dts`
++- Downstream vendor reference:
++  - `patches/0001-Android-4.9.118-G960FXXUHFVB4.patch.gz`
++  - specifically `exynos9810-starlte_eur_open_26.dts` section
++
++---
++
++## 1) Current upstream Exynos9810 status (gap baseline)
++Current Exynos9810 DT is still bring-up level:
++- Present: CPU map, PSCI, timer, PMU PMUv3 nodes, GIC, chipid, PMU syscon, pinctrl banks.
++- Missing from SoC DT: CMU/clock providers, most sysregs, USI/UART/I2C/SPI controllers, storage (UFS/MMC), USB DRD, PCIe, display pipeline, thermal zones/cooling maps, most multimedia and IOMMU wiring.
++- Board DT (`starlte`) currently contains only memory, splash framebuffer, and gpio-keys.
++
++Implication: the next work should be staged around foundational SoC infra and board power/peripheral bring-up, not feature-complete vendor parity.
++
++---
++
++## 2) Existing upstream drivers/bindings relevant to Galaxy S9
++
++These are immediately useful because they already exist in-tree.
++
++### Display / GPU / input
++- **Panel S6E3HA8**
++  - Binding: `Documentation/devicetree/bindings/display/panel/samsung,s6e3ha8.yaml`
++  - Driver: `drivers/gpu/drm/panel/panel-samsung-s6e3ha8.c`
++  - Value: direct path away from simplefb to real DRM panel node.
++
++- **Touchscreen S6SY761**
++  - Binding: `Documentation/devicetree/bindings/input/touchscreen/samsung,s6sy761.yaml`
++  - Driver: `drivers/input/touchscreen/s6sy761.c`
++  - Value: clean upstream replacement for vendor `sec_ts` style nodes.
++
++- **Mali Bifrost + Panfrost**
++  - Binding: `Documentation/devicetree/bindings/gpu/arm,mali-bifrost.yaml`
++  - Driver family: `drivers/gpu/drm/panfrost/*`
++  - Value: enables upstream GPU path for Mali-G72 class hardware.
++
++### Power / charging / PMIC
++- **MAX77705 PMIC family**
++  - MFD binding: `Documentation/devicetree/bindings/mfd/maxim,max77705.yaml`
++  - Charger binding: `Documentation/devicetree/bindings/power/supply/maxim,max77705.yaml`
++  - Drivers: `drivers/mfd/max77705.c`, `drivers/power/supply/max77705_charger.c`, `drivers/leds/leds-max77705.c`
++  - Value: charger/fuel/power ecosystem has upstream path.
++
++- **S2DOS05 regulator PMIC**
++  - Binding: `Documentation/devicetree/bindings/mfd/samsung,s2dos05.yaml`
++  - Driver: `drivers/regulator/s2dos05-regulator.c`
++  - Value: known panel/touch power rail provider in S9 references.
++
++### Connectivity / sensors / PMU
++- **Broadcom FullMAC Wi-Fi (`brcmfmac`)**
++  - Binding: `Documentation/devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml`
++  - Driver: `drivers/net/wireless/broadcom/brcm80211/brcmfmac/*`
++  - Value: usable upstream Wi-Fi integration strategy.
++
++- **ST LSM6DSx IMU**
++  - Driver stack: `drivers/iio/imu/st_lsm6dsx/*`
++  - Value: likely sensor-hub/IMU integration path when exact part is confirmed.
++
++- **ARM PMUv3 / Mongoose PMU compatibility**
++  - Binding: `Documentation/devicetree/bindings/arm/pmu.yaml`
++  - Driver: `drivers/perf/arm_pmuv3.c`
++  - Value: existing 9810 PMU nodes are on an upstream-compatible path.
++
++---
++
++## 3) High-value information extracted from downstream `starlte_eur_open_26.dts`
++
++The downstream file is vendor-heavy, but it still provides strong board-topology hints that are useful for upstream sequencing.
++
++### A. Confirms key board components and buses
++- Touch controller appears on `hsi2c@104B0000` at `reg = <0x48>` (vendor compatible is `sec,sec_ts`; upstream target should be `samsung,s6sy761` once validated).
++- `s2dos05_pmic@60` appears on `hsi2c@14350000` with rails used like display power rails.
++- `max77705@66` appears on `hsi2c@14360000`.
++- `dwmmc2@11500000` exists and is configured for external SD slot.
++- `ufs@0x11120000` exists with dedicated fixed regulator (`ufs-vcc`) and UFS PHY subnodes.
++- `usb@10C00000` + DWC3 subnode + `phy@11100000` exist.
++- `pcie0@116A0000` and `pcie1@116B0000` exist.
++- Display stack nodes exist: `decon_f@0x16030000`, `dsim@0x16080000`, `displayport@0x11090000`.
++
++### B. Useful pinctrl and wake-line clues
++Downstream defines dedicated pin states for:
++- `wlan_host_wake`, `bt_hostwake`, `pcie_wake`, `ufs-rst-n`, `ufs-refclk-out`, SD card detect, panel/TE-related lines.
++This is valuable for expanding current upstream `exynos9810-pinctrl.dtsi` beyond GPIO banks.
++
++### C. Thermal/cooling and IOMMU blocks exist downstream
++- Multiple thermal zones/cooling maps are defined downstream.
++- Numerous SYSMMU instances are defined for multimedia/display/camera paths.
++These are useful as existence proof, but vendor properties are not directly upstreamable.
++
++### D. What to avoid copying directly
++- Vendor-only compatibles/properties such as `sec,sec_ts`, `samsung,brcm-wlan`, `samsung,bcm43xx`, Samsung private battery policy blocks, and large vendor memory carve-outs.
++- These should be translated to upstream bindings and minimal required properties.
++
++---
++
++## 4) Revised prioritized backlog (upstream-driver-first)
++
++## High priority
++1. **CMU/sysreg + core controller scaffolding** (clock providers, sysregs, USI fabric).
++2. **Board power foundation** using upstream MAX77705/S2DOS05 bindings + regulator consumers.
++3. **Storage**: UFS host/PHY/fixed-supply and SD/MMC node(s).
++4. **USB DRD path**: Exynos USB + DWC3 + PHY and role wiring.
++5. **Display baseline**: DSI host graph + `samsung,s6e3ha8` panel.
++6. **Touch baseline**: I2C touch node using upstream `samsung,s6sy761` binding.
++
++## Medium priority
++1. **Wi-Fi/BT enablement** using upstream brcmfmac-style DT (host-wake/reset/firmware naming) and proper BT binding path.
++2. **Thermal zones/cooling maps + devfreq/cpufreq wiring** with upstream thermal framework constructs.
++3. **SYSMMU/IOMMU attachments** for display/media/camera pipelines.
++4. **Functional pinctrl groups** for buses and wake lines (not only bank declarations).
++
++## Low priority
++1. Camera/ISP/NPU feature completeness where bindings and drivers are still fragmented.
++2. Vendor extras (security/memory carveout-heavy nodes) unless there is a direct upstream equivalent.
++
++---
++
++## 5) Recommended implementation gates (before adding each DT node)
++For each planned component, require all 3 before implementation:
++1. Upstream binding exists for the exact compatible.
++2. Upstream driver exists and has OF match for that compatible.
++3. At least one upstream DT reference pattern exists (same SoC family or same peripheral).
++
++If any gate fails, mark as deferred/experimental and do not include in initial starlte enablement series.
++
++---
++
++## 6) Proposed execution order for future patches
++1. SoC infra: CMU/sysreg/USI + basic serial path.
++2. PMIC/regulators (MAX77705/S2DOS05), then consumers.
++3. Storage + USB.
++4. Display panel + touchscreen.
++5. Thermal + IOMMU.
++6. Connectivity (Wi-Fi/BT) and remaining sensors.
++
++This order minimizes dead-ends and aligns with available upstream drivers.
++
++---
++
++## 7) Commit strategy for upstreaming (bite-size, subsystem-focused)
++When turning this plan into patches, use **small, reviewable commits** and follow kernel norms:
++
++- One logical change per commit (single subsystem/topic whenever possible).
++- Keep DTSI (SoC) and DTS (board) changes separate unless tightly coupled.
++- Add bindings first when new compatibles/properties are introduced, then driver support, then DT usage.
++- Prefer enabling infrastructure in one patch and consumers in subsequent patches.
++- Avoid mixing refactors/renames with functional enablement.
++- Keep vendor-only properties out of upstream series; map only to documented upstream bindings.
++
++### Commit message best practices
++- Subject format: `arm64: dts: exynos: <what changed>`
++- Subject length ~72 chars, imperative mood.
++- Body explains:
++  1. Why change is needed (problem / missing support)
++  2. What hardware/topology is being modeled
++  3. Why binding/compatible choice is correct (upstream reference)
++  4. Any limitations/TODOs (explicitly)
++- Add tags as appropriate (`Fixes:`, `Link:`, `Signed-off-by:`), and keep changelog concise.
++
++---
++
++## 8) Prioritized high-level commit list (proposed)
++The list below is intentionally split into small upstreamable units.
++
++## Phase 1 — SoC foundation (highest priority)
++- [x] **`arm64: dts: exynos: add Exynos9810 CMU/sysreg skeleton`**
++   - Introduce core clock controller and required sysreg nodes needed by later IP blocks.
++- [x] **`arm64: dts: exynos: add Exynos9810 USI controller blocks`**
++   - Add USI parent nodes with disabled child-mode endpoints (I2C/SPI/UART style).
++- [x] **`arm64: dts: exynos: add Exynos9810 watchdog/MCT/RTC base nodes`**
++   - Minimal timer/watchdog infrastructure required for stable bring-up and reboot paths.
++
++## Phase 2 — Board power and pinmux prerequisites
++- [x] **`arm64: dts: exynos: starlte: add PMIC interrupt and base regulator placeholders`**
++   - Temporary placeholders only where needed to unblock strict binding requirements.
++- [x] **`arm64: dts: exynos: starlte: model S2DOS05 PMIC regulators`**
++   - Add S2DOS05 node and rail definitions used by display/touch and related consumers.
++- [x] **`arm64: dts: exynos: starlte: add MAX77705 PMIC/charger topology`**
++   - Add MAX77705 MFD and charger/fuel-related upstream-compatible node layout.
++- [x] **`arm64: dts: exynos: add Exynos9810 pinctrl functional groups`**
++   - Add bus/wake-related groups (`ufs-rst`, `wlan_host_wake`, `bt_hostwake`, etc.).
++
++## Phase 3 — Essential IO
++- [x] **`arm64: dts: exynos: add Exynos9810 UFS host/phy nodes`**
++   - SoC-level UFS + PHY description with board-side supply hooks left in DTS.
++- [x] **`arm64: dts: exynos: starlte: wire UFS supplies/reset/pinctrl`**
++   - Board-level regulator/reset/pinctrl wiring for usable UFS.
++- [x] **`arm64: dts: exynos: add Exynos9810 dw-mshc node`**
++    - SoC MMC controller node disabled by default.
++- [x] **`arm64: dts: exynos: starlte: enable external SD slot`**
++    - Card-detect GPIO, pinctrl, bus-width, timing, and regulator hookup.
++- [x] **`arm64: dts: exynos: add Exynos9810 USB DRD and PHY nodes`**
++    - SoC USB core + DWC3 + PHY framework nodes.
++- [x] **`arm64: dts: exynos: starlte: enable USB-C DRD path`**
++    - Board role/data path, interrupts, supplies and connector graph if applicable.
++
++## Phase 4 — User-facing baseline
++
++- [x] **`arm64: dts: exynos: add Exynos9810 display host nodes`**
++  - Helper SoC commit to introduce DECON/DSIM host endpoints needed by the panel graph commit.
++- [x] **`arm64: dts: exynos: starlte: add S6E3HA8 panel graph`**
++    - DSI panel node with upstream `samsung,s6e3ha8` binding and supplies/reset lines.
++- [x] **`arm64: dts: exynos: starlte: add S6SY761 touchscreen node`**
++    - I2C touch node at validated bus/address with IRQ and `avdd/vdd` supplies.
++- [x] **`arm64: dts: exynos: starlte: add ramoops and tighten reserved-memory`**
++    - Keep only upstream-relevant carveouts and remove vendor-specific memory regions.
++
++## Phase 5 — Performance and completeness
++- [x] **`arm64: dts: exynos: add Exynos9810 SYSMMU blocks`**
++    - Add IOMMU blocks with minimal upstream properties.
++- [x] **`arm64: dts: exynos: add starlte thermal zones and cooling maps`**
++    - Thermal sensors, trips and cooling-device links with conservative limits.
++- [x] **`arm64: dts: exynos: starlte: add Wi-Fi/BT board wiring`**
++    - Upstream binding-based host-wake/reset wiring and power sequencing.
++
++### Optional later series (only if binding+driver support is ready)
++- [x] **`arm64: dts: exynos: add Exynos9810 optional HSI2C bus for aux devices`**
++  - Add an additional disabled-first HSI2C controller block used as a carrier for optional peripherals.
++- [x] **`arm64: dts: exynos: add starlte optional IMU/NFC nodes`**
++  - Add disabled optional ST LSM6DSx IMU path and Samsung S3FWRN5 NFC path using upstream bindings.
++- [x] **`arm64: dts: exynos: add starlte camera clock pinctrl groundwork`**
++  - Add camera MCLK-related pinctrl states as incremental camera topology groundwork without vendor-only camera stack nodes.
++
++This structure should make rebasing easier and reduce review friction by keeping each patch narrowly scoped.
+-- 
+2.43.0
+
