@@ -1,0 +1,25 @@
+From 6390a8900afcb04b163ef199d133d661b7768ea1 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 8 Mar 2026 19:03:25 +0000
+Subject: [PATCH 7/7] gitignore: allow tracking .patch files
+
+Keep generated format-patch artifacts under patches/ in-tree for review.\n\nSigned-off-by: Codex <codex@openai.com>
+---
+ .gitignore | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/.gitignore b/.gitignore
+index b53b268cc1..ea36d32995 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -39,7 +39,6 @@
+ *.mod.c
+ *.o
+ *.o.*
+-*.patch
+ *.pyc
+ *.rlib
+ *.rmeta
+-- 
+2.43.0
+

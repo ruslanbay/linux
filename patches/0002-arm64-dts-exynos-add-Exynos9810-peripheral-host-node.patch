@@ -1,0 +1,278 @@
+From b8ba222d8a0d948c75727689c957e6bbe841b1cc Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 8 Mar 2026 19:02:04 +0000
+Subject: [PATCH 2/7] arm64: dts: exynos: add Exynos9810 peripheral host nodes
+
+Add disabled-by-default host/controller nodes for USI/I2C, MCT/RTC/watchdog,\nUFS/UFS PHY, DW-MSHC, USB DRD/PHY, display host (DECON/DSIM),\nSYSMMU placeholders and a basic thermal zone.\n\nThis models the SoC topology needed by subsequent board-level enabling\npatches while keeping unsupported blocks disabled.\n\nCompatible strings and node structure follow existing upstream Samsung\nbindings used by adjacent Exynos families.\n\nSigned-off-by: Codex <codex@openai.com>
+---
+ arch/arm64/boot/dts/exynos/exynos9810.dtsi | 240 +++++++++++++++++++++
+ 1 file changed, 240 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810.dtsi b/arch/arm64/boot/dts/exynos/exynos9810.dtsi
+index 980b3043d2..2822b18673 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810.dtsi
++++ b/arch/arm64/boot/dts/exynos/exynos9810.dtsi
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <dt-bindings/interrupt-controller/arm-gic.h>
++#include <dt-bindings/soc/samsung,exynos-usi.h>
+ 
+ / {
+ 	compatible = "samsung,exynos9810";
+@@ -291,6 +292,224 @@ pinctrl_aud: pinctrl@17c60000 {
+ 			compatible = "samsung,exynos9810-pinctrl";
+ 			reg = <0x17c60000 0x1000>;
+ 		};
++
++		usi_hsi2c_10: usi@104b00c0 {
++			compatible = "samsung,exynos850-usi";
++			reg = <0x104b00c0 0x20>;
++			samsung,mode = <USI_MODE_I2C>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges;
++			status = "disabled";
++
++			hsi2c_10: i2c@104b0000 {
++				compatible = "samsung,exynos850-hsi2c",
++					     "samsung,exynosautov9-hsi2c";
++				reg = <0x104b0000 0xc0>;
++				interrupts = <GIC_SPI 404 IRQ_TYPE_LEVEL_HIGH>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++				status = "disabled";
++			};
++		};
++
++		usi_hsi2c_11: usi@108e00c0 {
++			compatible = "samsung,exynos850-usi";
++			reg = <0x108e00c0 0x20>;
++			samsung,mode = <USI_MODE_I2C>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges;
++			status = "disabled";
++
++			hsi2c_11: i2c@108e0000 {
++				compatible = "samsung,exynos850-hsi2c",
++					     "samsung,exynosautov9-hsi2c";
++				reg = <0x108e0000 0xc0>;
++				interrupts = <GIC_SPI 432 IRQ_TYPE_LEVEL_HIGH>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++				status = "disabled";
++			};
++		};
++
++		usi_hsi2c_43: usi@143500c0 {
++			compatible = "samsung,exynos850-usi";
++			reg = <0x143500c0 0x20>;
++			samsung,mode = <USI_MODE_I2C>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges;
++			status = "disabled";
++
++			hsi2c_43: i2c@14350000 {
++				compatible = "samsung,exynos850-hsi2c",
++					     "samsung,exynosautov9-hsi2c";
++				reg = <0x14350000 0xc0>;
++				interrupts = <GIC_SPI 5 IRQ_TYPE_LEVEL_HIGH>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++				status = "disabled";
++			};
++		};
++
++		usi_hsi2c_44: usi@143600c0 {
++			compatible = "samsung,exynos850-usi";
++			reg = <0x143600c0 0x20>;
++			samsung,mode = <USI_MODE_I2C>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges;
++			status = "disabled";
++
++			hsi2c_44: i2c@14360000 {
++				compatible = "samsung,exynos850-hsi2c",
++					     "samsung,exynosautov9-hsi2c";
++				reg = <0x14360000 0xc0>;
++				interrupts = <GIC_SPI 6 IRQ_TYPE_LEVEL_HIGH>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++				status = "disabled";
++			};
++		};
++
++		mct: timer@10040000 {
++			compatible = "samsung,exynos8895-mct",
++				     "samsung,exynos4210-mct";
++			reg = <0x10040000 0x800>;
++			clocks = <&oscclk>, <&oscclk>;
++			clock-names = "fin_pll", "mct";
++			interrupts = <GIC_SPI 455 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 456 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 457 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 458 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		rtc: rtc@10590000 {
++			compatible = "samsung,exynos7-rtc", "samsung,s3c6410-rtc";
++			reg = <0x10590000 0x100>;
++			interrupts = <GIC_SPI 355 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 356 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&oscclk>;
++			clock-names = "rtc";
++			status = "disabled";
++		};
++
++		watchdog_cl0: watchdog@10050000 {
++			compatible = "samsung,exynos7-wdt";
++			reg = <0x10050000 0x100>;
++			interrupts = <GIC_SPI 460 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&oscclk>;
++			clock-names = "watchdog";
++			samsung,syscon-phandle = <&pmu_system_controller>;
++			status = "disabled";
++		};
++
++		watchdog_cl1: watchdog@10060000 {
++			compatible = "samsung,exynos7-wdt";
++			reg = <0x10060000 0x100>;
++			interrupts = <GIC_SPI 461 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&oscclk>;
++			clock-names = "watchdog";
++			samsung,syscon-phandle = <&pmu_system_controller>;
++			status = "disabled";
++		};
++
++		ufs: ufs@11120000 {
++			compatible = "samsung,exynos-ufs";
++			reg = <0x11120000 0x200>,
++			      <0x11121100 0x200>,
++			      <0x11110000 0x8000>,
++			      <0x11130000 0x100>;
++			interrupts = <GIC_SPI 242 IRQ_TYPE_LEVEL_HIGH>;
++			pinctrl-names = "default";
++			pinctrl-0 = <&ufs_rst_n &ufs_refclk_out>;
++			status = "disabled";
++		};
++
++		ufs_phy: phy@11124000 {
++			compatible = "samsung,exynos7-ufs-phy";
++			reg = <0x11124000 0x800>;
++			#phy-cells = <0>;
++			status = "disabled";
++		};
++
++		mmc: mmc@11500000 {
++			compatible = "samsung,exynos-dw-mshc";
++			reg = <0x11500000 0x2000>;
++			interrupts = <GIC_SPI 249 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
++		};
++
++		usbdrd: usb@10c00000 {
++			compatible = "samsung,exynos850-dwusb3";
++			ranges = <0x0 0x10c00000 0x10000>;
++			clocks = <&oscclk>, <&oscclk>;
++			clock-names = "bus_early", "ref";
++			#address-cells = <1>;
++			#size-cells = <1>;
++			status = "disabled";
++
++			usbdrd_dwc3: usb@0 {
++				compatible = "snps,dwc3";
++				reg = <0x0 0x10000>;
++				interrupts = <GIC_SPI 244 IRQ_TYPE_LEVEL_HIGH>;
++				phys = <&usbdrd_phy 0>;
++				phy-names = "usb2-phy";
++			};
++		};
++
++		usbdrd_phy: phy@11100000 {
++			compatible = "samsung,exynos850-usbdrd-phy";
++			reg = <0x11100000 0x100>;
++			clocks = <&oscclk>, <&oscclk>;
++			clock-names = "phy", "ref";
++			samsung,pmu-syscon = <&pmu_system_controller>;
++			#phy-cells = <1>;
++			status = "disabled";
++		};
++
++		decon_f: display-controller@16030000 {
++			compatible = "samsung,exynos9-decon";
++			reg = <0x16030000 0x10000>;
++			interrupts = <GIC_SPI 194 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		dsim0: dsi@16080000 {
++			compatible = "samsung,exynos9-dsim";
++			reg = <0x16080000 0x10000>;
++			interrupts = <GIC_SPI 203 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
++
++			port {
++				dsim0_out: endpoint {
++					remote-endpoint = <&panel_in>;
++				};
++			};
++		};
++
++		sysmmu_pcie: iommu@11420000 {
++			compatible = "samsung,pcie-sysmmu";
++			reg = <0x11420000 0x9000>;
++			interrupts = <GIC_SPI 264 IRQ_TYPE_LEVEL_HIGH>;
++			#iommu-cells = <0>;
++			status = "disabled";
++		};
++
++		sysmmu_dpu: iommu@160a0000 {
++			compatible = "samsung,exynos-sysmmu";
++			reg = <0x160a0000 0x9000>;
++			interrupts = <GIC_SPI 211 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 210 IRQ_TYPE_LEVEL_HIGH>;
++			#iommu-cells = <0>;
++			status = "disabled";
++		};
+ 	};
+ 
+ 	timer {
+@@ -306,6 +525,27 @@ timer {
+ 		 */
+ 		clock-frequency = <26000000>;
+ 	};
++
++	thermal-zones {
++		cpu-thermal {
++			polling-delay-passive = <250>;
++			polling-delay = <1000>;
++
++			trips {
++				cpu_alert0: cpu-alert0 {
++					temperature = <75000>;
++					hysteresis = <2000>;
++					type = "passive";
++				};
++
++				cpu_crit0: cpu-crit0 {
++					temperature = <115000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++		};
++	};
+ };
+ 
+ #include "exynos9810-pinctrl.dtsi"
+-- 
+2.43.0
+

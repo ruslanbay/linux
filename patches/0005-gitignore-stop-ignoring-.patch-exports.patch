@@ -1,0 +1,25 @@
+From 5c3a04942ce29cdf704d0e33ceb5b8615547aef7 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 8 Mar 2026 19:02:25 +0000
+Subject: [PATCH 5/7] gitignore: stop ignoring .patch exports
+
+Allow tracking generated format-patch files under patches/.\n\nSigned-off-by: Codex <codex@openai.com>
+---
+ .gitignore | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/.gitignore b/.gitignore
+index 3a7241c941..b53b268cc1 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -129,7 +129,6 @@ modules.order
+ patches-*
+ 
+ # quilt's files
+-patches
+ series
+ 
+ # ctags files
+-- 
+2.43.0
+
