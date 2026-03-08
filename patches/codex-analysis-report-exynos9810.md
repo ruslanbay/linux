@@ -181,51 +181,54 @@ When turning this plan into patches, use **small, reviewable commits** and follo
 The list below is intentionally split into small upstreamable units.
 
 ## Phase 1 — SoC foundation (highest priority)
-1. **`arm64: dts: exynos: add Exynos9810 CMU/sysreg skeleton`**
+- [x] **`arm64: dts: exynos: add Exynos9810 CMU/sysreg skeleton`**
    - Introduce core clock controller and required sysreg nodes needed by later IP blocks.
-2. **`arm64: dts: exynos: add Exynos9810 USI controller blocks`**
+- [x] **`arm64: dts: exynos: add Exynos9810 USI controller blocks`**
    - Add USI parent nodes with disabled child-mode endpoints (I2C/SPI/UART style).
-3. **`arm64: dts: exynos: add Exynos9810 watchdog/MCT/RTC base nodes`**
+- [x] **`arm64: dts: exynos: add Exynos9810 watchdog/MCT/RTC base nodes`**
    - Minimal timer/watchdog infrastructure required for stable bring-up and reboot paths.
 
 ## Phase 2 — Board power and pinmux prerequisites
-4. **`arm64: dts: exynos: starlte: add PMIC interrupt and base regulator placeholders`**
+- [x] **`arm64: dts: exynos: starlte: add PMIC interrupt and base regulator placeholders`**
    - Temporary placeholders only where needed to unblock strict binding requirements.
-5. **`arm64: dts: exynos: starlte: model S2DOS05 PMIC regulators`**
+- [x] **`arm64: dts: exynos: starlte: model S2DOS05 PMIC regulators`**
    - Add S2DOS05 node and rail definitions used by display/touch and related consumers.
-6. **`arm64: dts: exynos: starlte: add MAX77705 PMIC/charger topology`**
+- [x] **`arm64: dts: exynos: starlte: add MAX77705 PMIC/charger topology`**
    - Add MAX77705 MFD and charger/fuel-related upstream-compatible node layout.
-7. **`arm64: dts: exynos: add Exynos9810 pinctrl functional groups`**
+- [x] **`arm64: dts: exynos: add Exynos9810 pinctrl functional groups`**
    - Add bus/wake-related groups (`ufs-rst`, `wlan_host_wake`, `bt_hostwake`, etc.).
 
 ## Phase 3 — Essential IO
-8. **`arm64: dts: exynos: add Exynos9810 UFS host/phy nodes`**
+- [x] **`arm64: dts: exynos: add Exynos9810 UFS host/phy nodes`**
    - SoC-level UFS + PHY description with board-side supply hooks left in DTS.
-9. **`arm64: dts: exynos: starlte: wire UFS supplies/reset/pinctrl`**
+- [x] **`arm64: dts: exynos: starlte: wire UFS supplies/reset/pinctrl`**
    - Board-level regulator/reset/pinctrl wiring for usable UFS.
-10. **`arm64: dts: exynos: add Exynos9810 dw-mshc node`**
+- [x] **`arm64: dts: exynos: add Exynos9810 dw-mshc node`**
     - SoC MMC controller node disabled by default.
-11. **`arm64: dts: exynos: starlte: enable external SD slot`**
+- [x] **`arm64: dts: exynos: starlte: enable external SD slot`**
     - Card-detect GPIO, pinctrl, bus-width, timing, and regulator hookup.
-12. **`arm64: dts: exynos: add Exynos9810 USB DRD and PHY nodes`**
+- [x] **`arm64: dts: exynos: add Exynos9810 USB DRD and PHY nodes`**
     - SoC USB core + DWC3 + PHY framework nodes.
-13. **`arm64: dts: exynos: starlte: enable USB-C DRD path`**
+- [x] **`arm64: dts: exynos: starlte: enable USB-C DRD path`**
     - Board role/data path, interrupts, supplies and connector graph if applicable.
 
 ## Phase 4 — User-facing baseline
-14. **`arm64: dts: exynos: starlte: add S6E3HA8 panel graph`**
+
+- [x] **`arm64: dts: exynos: add Exynos9810 display host nodes`**
+  - Helper SoC commit to introduce DECON/DSIM host endpoints needed by the panel graph commit.
+- [x] **`arm64: dts: exynos: starlte: add S6E3HA8 panel graph`**
     - DSI panel node with upstream `samsung,s6e3ha8` binding and supplies/reset lines.
-15. **`arm64: dts: exynos: starlte: add S6SY761 touchscreen node`**
+- [x] **`arm64: dts: exynos: starlte: add S6SY761 touchscreen node`**
     - I2C touch node at validated bus/address with IRQ and `avdd/vdd` supplies.
-16. **`arm64: dts: exynos: starlte: add ramoops and tighten reserved-memory`**
+- [x] **`arm64: dts: exynos: starlte: add ramoops and tighten reserved-memory`**
     - Keep only upstream-relevant carveouts and remove vendor-specific memory regions.
 
 ## Phase 5 — Performance and completeness
-17. **`arm64: dts: exynos: add Exynos9810 SYSMMU blocks`**
+- [x] **`arm64: dts: exynos: add Exynos9810 SYSMMU blocks`**
     - Add IOMMU blocks with minimal upstream properties.
-18. **`arm64: dts: exynos: add starlte thermal zones and cooling maps`**
+- [x] **`arm64: dts: exynos: add starlte thermal zones and cooling maps`**
     - Thermal sensors, trips and cooling-device links with conservative limits.
-19. **`arm64: dts: exynos: starlte: add Wi-Fi/BT board wiring`**
+- [x] **`arm64: dts: exynos: starlte: add Wi-Fi/BT board wiring`**
     - Upstream binding-based host-wake/reset wiring and power sequencing.
 
 ### Optional later series (only if binding+driver support is ready)
