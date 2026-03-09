@@ -26,7 +26,6 @@
 *.elf
 *.gcno
 *.gcda
-*.gz
 *.i
 *.ko
 *.lex.c
@@ -39,7 +38,6 @@
 *.mod.c
 *.o
 *.o.*
-*.patch
 *.pyc
 *.rlib
 *.rmeta
@@ -129,7 +127,6 @@ modules.order
 patches-*
 
 # quilt's files
-patches
 series
 
 # ctags files
