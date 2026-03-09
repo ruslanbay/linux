@@ -429,6 +429,57 @@
 				status = "disabled";
 			};
 		};
+
+		mct: timer@10040000 {
+			compatible = "samsung,exynos8895-mct",
+				     "samsung,exynos4210-mct";
+			reg = <0x10040000 0x800>;
+			clocks = <&oscclk>, <&oscclk>;
+			clock-names = "fin_pll", "mct";
+			interrupts = <GIC_SPI 455 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 456 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 457 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 458 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 459 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 460 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 461 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 462 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 463 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 464 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 465 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 466 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
+		rtc: rtc@10590000 {
+			compatible = "samsung,exynos7-rtc", "samsung,s3c6410-rtc";
+			reg = <0x10590000 0x100>;
+			interrupts = <GIC_SPI 355 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 356 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&oscclk>, <&oscclk>;
+			clock-names = "rtc", "rtc_src";
+			status = "disabled";
+		};
+
+		watchdog_cl0: watchdog@10050000 {
+			compatible = "samsung,exynos7-wdt";
+			reg = <0x10050000 0x100>;
+			interrupts = <GIC_SPI 460 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&oscclk>;
+			clock-names = "watchdog";
+			samsung,syscon-phandle = <&pmu_system_controller>;
+			status = "disabled";
+		};
+
+		watchdog_cl1: watchdog@10060000 {
+			compatible = "samsung,exynos7-wdt";
+			reg = <0x10060000 0x100>;
+			interrupts = <GIC_SPI 461 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&oscclk>;
+			clock-names = "watchdog";
+			samsung,syscon-phandle = <&pmu_system_controller>;
+			status = "disabled";
+		};
 	};
 
 	timer {
