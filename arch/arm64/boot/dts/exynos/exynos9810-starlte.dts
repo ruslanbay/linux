@@ -11,6 +11,7 @@
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/usb/pd.h>
 
 / {
 	model = "Samsung Galaxy S9 (SM-G960F)";
@@ -214,6 +215,27 @@
 	samsung,dw-mshc-sdr-timing = <0 3>;
 
 	status = "okay";
+};
+
+&usbdrd {
+	vdd10-supply = <&s2dos05_buck>;
+	vdd33-supply = <&s2dos05_ldo3>;
+	status = "okay";
+};
+
+&usbdrd_dwc3 {
+	status = "okay";
+	dr_mode = "otg";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	connector {
+		compatible = "usb-c-connector";
+		label = "USB-C";
+		data-role = "device";
+		power-role = "sink";
+		status = "disabled";
+	};
 };
 
 &pinctrl_alive {
