@@ -205,6 +205,28 @@
 	};
 };
 
+&hsi2c_12 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	imu@6a {
+		compatible = "st,lsm6dsm";
+		reg = <0x6a>;
+		status = "disabled";
+	};
+
+	nfc@27 {
+		compatible = "samsung,s3fwrn5-i2c";
+		reg = <0x27>;
+		interrupt-parent = <&gpa1>;
+		interrupts = <3 IRQ_TYPE_LEVEL_HIGH>;
+		en-gpios = <&gpg3 0 GPIO_ACTIVE_HIGH>;
+		wake-gpios = <&gpg3 1 GPIO_ACTIVE_HIGH>;
+		status = "disabled";
+	};
+};
+
 &hsi2c_44 {
 	#address-cells = <1>;
 	#size-cells = <0>;
