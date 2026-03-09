@@ -436,3 +436,33 @@
 		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV4>;
 	};
 };
+
+&pinctrl_peric1 {
+	cam_mclk0: cam-mclk0-pins {
+		samsung,pins = "gpc1-4";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
+	};
+
+	cam_mclk1: cam-mclk1-pins {
+		samsung,pins = "gpc1-5";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
+	};
+
+	cam_mclk2: cam-mclk2-pins {
+		samsung,pins = "gpc1-6";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
+	};
+
+	cam_mclk3: cam-mclk3-pins {
+		samsung,pins = "gpc1-7";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
+	};
+};
