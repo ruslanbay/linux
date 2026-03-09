@@ -416,6 +416,25 @@
 			samsung,syscon-phandle = <&pmu_system_controller>;
 			status = "disabled";
 		};
+
+		ufs: ufs@11120000 {
+			compatible = "samsung,exynos-ufs";
+			reg = <0x11120000 0x200>,
+			      <0x11121100 0x200>,
+			      <0x11110000 0x8000>,
+			      <0x11130000 0x100>;
+			interrupts = <GIC_SPI 242 IRQ_TYPE_LEVEL_HIGH>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&ufs_rst_n &ufs_refclk_out>;
+			status = "disabled";
+		};
+
+		ufs_phy: phy@11124000 {
+			compatible = "samsung,exynos7-ufs-phy";
+			reg = <0x11124000 0x800>;
+			#phy-cells = <0>;
+			status = "disabled";
+		};
 	};
 
 	timer {
