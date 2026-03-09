@@ -520,6 +520,34 @@
 			#size-cells = <0>;
 			status = "disabled";
 		};
+
+		usbdrd: usb@10c00000 {
+			compatible = "samsung,exynos850-dwusb3";
+			ranges = <0x0 0x10c00000 0x10000>;
+			clocks = <&oscclk>, <&oscclk>;
+			clock-names = "bus_early", "ref";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			status = "disabled";
+
+			usbdrd_dwc3: usb@0 {
+				compatible = "snps,dwc3";
+				reg = <0x0 0x10000>;
+				interrupts = <GIC_SPI 244 IRQ_TYPE_LEVEL_HIGH>;
+				phys = <&usbdrd_phy 0>;
+				phy-names = "usb2-phy";
+			};
+		};
+
+		usbdrd_phy: phy@11100000 {
+			compatible = "samsung,exynos850-usbdrd-phy";
+			reg = <0x11100000 0x100>;
+			clocks = <&oscclk>, <&oscclk>;
+			clock-names = "phy", "ref";
+			samsung,pmu-syscon = <&pmu_system_controller>;
+			#phy-cells = <1>;
+			status = "disabled";
+		};
 	};
 
 	timer {
