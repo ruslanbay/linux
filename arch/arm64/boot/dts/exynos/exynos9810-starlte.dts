@@ -112,6 +112,8 @@
 &hsi2c_43 {
 	#address-cells = <1>;
 	#size-cells = <0>;
+	pinctrl-0 = <&hsi2c43_bus>;
+	pinctrl-names = "default";
 	status = "okay";
 
 	s2dos05_pmic: pmic@60 {
@@ -154,9 +156,30 @@
 	};
 };
 
+&hsi2c_10 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	pinctrl-0 = <&hsi2c10_bus>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	touchscreen@48 {
+		compatible = "samsung,s6sy761";
+		reg = <0x48>;
+		pinctrl-0 = <&ts_int>;
+		pinctrl-names = "default";
+		interrupt-parent = <&gpa1>;
+		interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
+		avdd-supply = <&s2dos05_ldo3>;
+		vdd-supply = <&s2dos05_ldo2>;
+	};
+};
+
 &hsi2c_44 {
 	#address-cells = <1>;
 	#size-cells = <0>;
+	pinctrl-0 = <&hsi2c44_bus>;
+	pinctrl-names = "default";
 	status = "okay";
 
 	max77705: pmic@66 {
@@ -298,6 +321,13 @@
 		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
 		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
 		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV4>;
+	};
+
+	ts_int: ts-int-pins {
+		samsung,pins = "gpa1-0";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
 	};
 };
 
