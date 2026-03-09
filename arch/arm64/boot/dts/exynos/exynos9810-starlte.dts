@@ -84,6 +84,16 @@
 		};
 	};
 
+	ufs_vcc_reg: regulator-1 {
+		compatible = "regulator-fixed";
+		regulator-name = "ufs-vcc";
+		regulator-min-microvolt = <2950000>;
+		regulator-max-microvolt = <2950000>;
+		regulator-boot-on;
+		enable-active-high;
+		gpio = <&gpf0 2 GPIO_ACTIVE_HIGH>;
+	};
+
 	battery: battery {
 		compatible = "simple-battery";
 		constant-charge-current-max-microamp = <2150000>;
@@ -172,6 +182,16 @@
 		interrupt-parent = <&max77705>;
 		interrupts = <2>;
 	};
+};
+
+&ufs {
+	status = "okay";
+	vcc-supply = <&ufs_vcc_reg>;
+	pinctrl-0 = <&ufs_rst_n &ufs_refclk_out>;
+};
+
+&ufs_phy {
+	status = "okay";
 };
 
 &pinctrl_alive {
