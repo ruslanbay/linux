@@ -248,6 +248,18 @@
 	status = "okay";
 };
 
+/ {
+	bluetooth {
+		compatible = "brcm,bcm4329-bt";
+		shutdown-gpios = <&gpg2 0 GPIO_ACTIVE_HIGH>;
+		device-wakeup-gpios = <&gpg2 0 GPIO_ACTIVE_HIGH>;
+		host-wakeup-gpios = <&gpa2 3 GPIO_ACTIVE_HIGH>;
+		pinctrl-0 = <&bt_hostwake &bt_btwake>;
+		pinctrl-names = "default";
+		status = "disabled";
+	};
+};
+
 &mmc {
 	pinctrl-0 = <&sd2_clk &sd2_cmd &sd2_bus1 &sd2_bus4 &sd2_cd>;
 	pinctrl-names = "default";
@@ -268,6 +280,18 @@
 	samsung,dw-mshc-sdr-timing = <0 3>;
 
 	status = "okay";
+
+	wifi@1 {
+		compatible = "brcm,bcm4359-fmac", "brcm,bcm4329-fmac";
+		reg = <1>;
+		interrupt-parent = <&gpa0>;
+		interrupts = <7 IRQ_TYPE_LEVEL_LOW>;
+		interrupt-names = "host-wake";
+		reset-gpios = <&gpg0 5 GPIO_ACTIVE_LOW>;
+		pinctrl-0 = <&cfg_wlanen &wlan_host_wake>;
+		pinctrl-names = "default";
+		status = "disabled";
+	};
 };
 
 &usbdrd {
