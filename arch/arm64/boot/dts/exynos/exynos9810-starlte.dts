@@ -10,6 +10,7 @@
 #include "exynos9810.dtsi"
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/irq.h>
 
 / {
 	model = "Samsung Galaxy S9 (SM-G960F)";
@@ -82,6 +83,14 @@
 			no-map;
 		};
 	};
+
+	battery: battery {
+		compatible = "simple-battery";
+		constant-charge-current-max-microamp = <2150000>;
+		charge-full-design-microamp-hours = <3000000>;
+		voltage-min-design-microvolt = <3400000>;
+		voltage-max-design-microvolt = <4350000>;
+	};
 };
 
 &oscclk {
@@ -131,6 +140,37 @@
 				regulator-max-microvolt = <2100000>;
 			};
 		};
+	};
+};
+
+&hsi2c_44 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	max77705: pmic@66 {
+		compatible = "maxim,max77705";
+		reg = <0x66>;
+		interrupt-controller;
+		#interrupt-cells = <1>;
+		interrupt-parent = <&gpa1>;
+		interrupts = <2 IRQ_TYPE_LEVEL_LOW>;
+	};
+
+	max77705_charger: charger@69 {
+		compatible = "maxim,max77705-charger";
+		reg = <0x69>;
+		monitored-battery = <&battery>;
+		interrupt-parent = <&max77705>;
+		interrupts = <0>;
+	};
+
+	fuel-gauge@36 {
+		compatible = "maxim,max77705-battery";
+		reg = <0x36>;
+		power-supplies = <&max77705_charger>;
+		interrupt-parent = <&max77705>;
+		interrupts = <2>;
 	};
 };
 
