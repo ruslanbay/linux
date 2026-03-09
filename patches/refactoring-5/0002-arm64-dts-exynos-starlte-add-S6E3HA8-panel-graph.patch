@@ -1,0 +1,51 @@
+From 8fd022cf45d1a4e7d3cf72579a7d088b17eee845 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 9 Mar 2026 17:42:41 +0000
+Subject: [PATCH 2/4] arm64: dts: exynos: starlte: add S6E3HA8 panel graph
+
+---
+ .../boot/dts/exynos/exynos9810-starlte.dts    | 28 +++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+index 17872c8206..47c724baee 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
++++ b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+@@ -247,6 +247,34 @@ connector {
+ 	};
+ };
+ 
++&dsim0 {
++	status = "okay";
++
++	panel@0 {
++		compatible = "samsung,s6e3ha8";
++		reg = <0>;
++		vci-supply = <&s2dos05_ldo4>;
++		vddr-supply = <&s2dos05_buck>;
++		vdd3-supply = <&s2dos05_ldo1>;
++		reset-gpios = <&gpg0 4 GPIO_ACTIVE_HIGH>;
++
++		port {
++			panel_in: endpoint {
++				remote-endpoint = <&dsim0_out>;
++			};
++		};
++	};
++};
++
++&pinctrl_peric0 {
++	panel_reset: panel-reset-pins {
++		samsung,pins = "gpg0-4";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV3>;
++	};
++};
++
+ &pinctrl_alive {
+ 	key_power: key-power-pins {
+ 		samsung,pins = "gpa2-4";
+-- 
+2.43.0
+

@@ -1,0 +1,62 @@
+From 7d172f6ea5077cffde5a716f06966b76a8df452a Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 9 Mar 2026 17:04:46 +0000
+Subject: [PATCH 1/7] arm64: dts: exynos: add Exynos9810 CMU/sysreg skeleton
+
+---
+ arch/arm64/boot/dts/exynos/exynos9810.dtsi | 39 ++++++++++++++++++++++
+ 1 file changed, 39 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810.dtsi b/arch/arm64/boot/dts/exynos/exynos9810.dtsi
+index 01eba31f7c..980b3043d2 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810.dtsi
++++ b/arch/arm64/boot/dts/exynos/exynos9810.dtsi
+@@ -171,6 +171,45 @@ chipid@10000000 {
+ 			reg = <0x10000000 0x100>;
+ 		};
+ 
++		cmu_peric0: clock-controller@10400000 {
++			compatible = "samsung,exynos9810-cmu-peric0";
++			reg = <0x10400000 0x8000>;
++			#clock-cells = <1>;
++			clocks = <&oscclk>;
++			clock-names = "oscclk";
++		};
++
++		cmu_peric1: clock-controller@10800000 {
++			compatible = "samsung,exynos9810-cmu-peric1";
++			reg = <0x10800000 0x8000>;
++			#clock-cells = <1>;
++			clocks = <&oscclk>;
++			clock-names = "oscclk";
++		};
++
++		cmu_fsys1: clock-controller@11400000 {
++			compatible = "samsung,exynos9810-cmu-fsys1";
++			reg = <0x11400000 0x8000>;
++			#clock-cells = <1>;
++			clocks = <&oscclk>;
++			clock-names = "oscclk";
++		};
++
++		syscon_peric0: syscon@10420000 {
++			compatible = "samsung,exynos9810-peric0-sysreg", "syscon";
++			reg = <0x10420000 0x2000>;
++		};
++
++		syscon_peric1: syscon@10820000 {
++			compatible = "samsung,exynos9810-peric1-sysreg", "syscon";
++			reg = <0x10820000 0x2000>;
++		};
++
++		syscon_fsys1: syscon@11420000 {
++			compatible = "samsung,exynos9810-fsys1-sysreg", "syscon";
++			reg = <0x11420000 0x2000>;
++		};
++
+ 		gic: interrupt-controller@10101000 {
+ 			compatible = "arm,gic-400";
+ 			reg = <0x10101000 0x1000>,
+-- 
+2.43.0
+

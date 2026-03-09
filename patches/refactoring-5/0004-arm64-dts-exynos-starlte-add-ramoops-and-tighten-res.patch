@@ -1,0 +1,42 @@
+From dcef6ec63cf34d2deeb2efaed533d8b2d1963cd3 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 9 Mar 2026 17:46:47 +0000
+Subject: [PATCH 4/4] arm64: dts: exynos: starlte: add ramoops and tighten
+ reserved-memory
+
+---
+ arch/arm64/boot/dts/exynos/exynos9810-starlte.dts | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+index baf1eb3fc6..bb33ce2154 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
++++ b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+@@ -25,7 +25,7 @@ chosen {
+ 
+ 		framebuffer@cc000000 {
+ 			compatible = "simple-framebuffer";
+-			reg = <0x0 0xcc000000 (1440 * 2960 * 4)>;
++			memory-region = <&cont_splash_mem>;
+ 			width = <1440>;
+ 			height = <2960>;
+ 			stride = <(1440 * 4)>;
+@@ -79,7 +79,14 @@ reserved-memory {
+ 		#size-cells = <1>;
+ 		ranges;
+ 
+-		framebuffer@cc000000 {
++		ramoops@92000000 {
++			compatible = "ramoops";
++			reg = <0 0x92000000 0x80000>;
++			record-size = <0x40000>;
++			console-size = <0x40000>;
++		};
++
++		cont_splash_mem: framebuffer@cc000000 {
+ 			reg = <0x0 0xcc000000 (1440 * 2960 * 4)>;
+ 			no-map;
+ 		};
+-- 
+2.43.0
+

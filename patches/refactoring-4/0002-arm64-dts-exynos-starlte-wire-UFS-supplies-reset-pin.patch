@@ -1,0 +1,51 @@
+From 681e538e56fb14720d74f0b0f3a13c21d49e02f0 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 9 Mar 2026 17:27:41 +0000
+Subject: [PATCH 2/6] arm64: dts: exynos: starlte: wire UFS
+ supplies/reset/pinctrl
+
+---
+ .../boot/dts/exynos/exynos9810-starlte.dts    | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+index e31c27c07b..fcee9e7547 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
++++ b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+@@ -90,6 +90,16 @@ reg_placeholder: regulator-0 {
+ 		regulator-name = "reg-placeholder";
+ 	};
+ 
++	ufs_vcc_reg: regulator-1 {
++		compatible = "regulator-fixed";
++		regulator-name = "ufs-vcc";
++		regulator-min-microvolt = <2950000>;
++		regulator-max-microvolt = <2950000>;
++		regulator-boot-on;
++		enable-active-high;
++		gpio = <&gpf0 2 GPIO_ACTIVE_HIGH>;
++	};
++
+ 	battery: battery {
+ 		compatible = "simple-battery";
+ 		constant-charge-current-max-microamp = <2150000>;
+@@ -180,6 +190,16 @@ fuel-gauge@36 {
+ 	};
+ };
+ 
++&ufs {
++	status = "okay";
++	vcc-supply = <&ufs_vcc_reg>;
++	pinctrl-0 = <&ufs_rst_n &ufs_refclk_out>;
++};
++
++&ufs_phy {
++	status = "okay";
++};
++
+ &pinctrl_alive {
+ 	key_power: key-power-pins {
+ 		samsung,pins = "gpa2-4";
+-- 
+2.43.0
+
