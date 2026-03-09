@@ -494,6 +494,15 @@
 				};
 			};
 		};
+
+		sysmmu_dpu: iommu@160a0000 {
+			compatible = "samsung,exynos-sysmmu";
+			reg = <0x160a0000 0x9000>;
+			interrupts = <GIC_SPI 211 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 210 IRQ_TYPE_LEVEL_HIGH>;
+			#iommu-cells = <0>;
+			status = "disabled";
+		};
 	};
 
 	timer {
