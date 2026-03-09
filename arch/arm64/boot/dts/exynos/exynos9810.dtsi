@@ -461,6 +461,16 @@
 			status = "disabled";
 		};
 
+		tmuctrl_0: tmu@10070000 {
+			compatible = "samsung,exynos7-tmu";
+			reg = <0x10070000 0x700>;
+			interrupts = <GIC_SPI 478 IRQ_TYPE_LEVEL_HIGH>;
+			#thermal-sensor-cells = <0>;
+			clocks = <&oscclk>, <&oscclk>;
+			clock-names = "tmu_apbif", "tmu_sclk";
+			status = "disabled";
+		};
+
 		watchdog_cl0: watchdog@10050000 {
 			compatible = "samsung,exynos7-wdt";
 			reg = <0x10050000 0x100>;
