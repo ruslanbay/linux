@@ -1,0 +1,42 @@
+From 0162e838c888c2c5c849e6e7426087e0980f770f Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 9 Mar 2026 17:25:21 +0000
+Subject: [PATCH 1/6] arm64: dts: exynos: add Exynos9810 UFS host/phy nodes
+
+---
+ arch/arm64/boot/dts/exynos/exynos9810.dtsi | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810.dtsi b/arch/arm64/boot/dts/exynos/exynos9810.dtsi
+index 759124a0d6..e80a9c49c7 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810.dtsi
++++ b/arch/arm64/boot/dts/exynos/exynos9810.dtsi
+@@ -416,6 +416,25 @@ watchdog_cl1: watchdog@10060000 {
+ 			samsung,syscon-phandle = <&pmu_system_controller>;
+ 			status = "disabled";
+ 		};
++
++		ufs: ufs@11120000 {
++			compatible = "samsung,exynos-ufs";
++			reg = <0x11120000 0x200>,
++			      <0x11121100 0x200>,
++			      <0x11110000 0x8000>,
++			      <0x11130000 0x100>;
++			interrupts = <GIC_SPI 242 IRQ_TYPE_LEVEL_HIGH>;
++			pinctrl-names = "default";
++			pinctrl-0 = <&ufs_rst_n &ufs_refclk_out>;
++			status = "disabled";
++		};
++
++		ufs_phy: phy@11124000 {
++			compatible = "samsung,exynos7-ufs-phy";
++			reg = <0x11124000 0x800>;
++			#phy-cells = <0>;
++			status = "disabled";
++		};
+ 	};
+ 
+ 	timer {
+-- 
+2.43.0
+

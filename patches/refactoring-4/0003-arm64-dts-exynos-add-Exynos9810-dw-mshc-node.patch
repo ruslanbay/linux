@@ -1,0 +1,32 @@
+From 5d1df391b717f7ad119cddfa74ee83bc3f71d5a0 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 9 Mar 2026 17:29:15 +0000
+Subject: [PATCH 3/6] arm64: dts: exynos: add Exynos9810 dw-mshc node
+
+---
+ arch/arm64/boot/dts/exynos/exynos9810.dtsi | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810.dtsi b/arch/arm64/boot/dts/exynos/exynos9810.dtsi
+index e80a9c49c7..506bd3c768 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810.dtsi
++++ b/arch/arm64/boot/dts/exynos/exynos9810.dtsi
+@@ -435,6 +435,15 @@ ufs_phy: phy@11124000 {
+ 			#phy-cells = <0>;
+ 			status = "disabled";
+ 		};
++
++		mmc: mmc@11500000 {
++			compatible = "samsung,exynos-dw-mshc";
++			reg = <0x11500000 0x2000>;
++			interrupts = <GIC_SPI 249 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
++		};
+ 	};
+ 
+ 	timer {
+-- 
+2.43.0
+

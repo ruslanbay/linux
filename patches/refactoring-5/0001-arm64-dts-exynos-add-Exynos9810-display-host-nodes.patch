@@ -1,0 +1,45 @@
+From aa1d4e049dae03d4a7c5b3e0b04016e00d959f9a Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 9 Mar 2026 17:40:27 +0000
+Subject: [PATCH 1/4] arm64: dts: exynos: add Exynos9810 display host nodes
+
+---
+ arch/arm64/boot/dts/exynos/exynos9810.dtsi | 22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810.dtsi b/arch/arm64/boot/dts/exynos/exynos9810.dtsi
+index a561890ea5..3ff1edd08a 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810.dtsi
++++ b/arch/arm64/boot/dts/exynos/exynos9810.dtsi
+@@ -472,6 +472,28 @@ usbdrd_phy: phy@11100000 {
+ 			#phy-cells = <1>;
+ 			status = "disabled";
+ 		};
++
++		decon_f: display-controller@16030000 {
++			compatible = "samsung,exynos9-decon";
++			reg = <0x16030000 0x10000>;
++			interrupts = <GIC_SPI 194 IRQ_TYPE_LEVEL_HIGH>;
++			status = "disabled";
++		};
++
++		dsim0: dsi@16080000 {
++			compatible = "samsung,exynos9-dsim";
++			reg = <0x16080000 0x10000>;
++			interrupts = <GIC_SPI 203 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
++
++			port {
++				dsim0_out: endpoint {
++					remote-endpoint = <&panel_in>;
++				};
++			};
++		};
+ 	};
+ 
+ 	timer {
+-- 
+2.43.0
+

@@ -1,0 +1,70 @@
+From e6883ee15f2b1c22391f77c35761600b218589a6 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 9 Mar 2026 17:13:34 +0000
+Subject: [PATCH 5/7] arm64: dts: exynos: starlte: model S2DOS05 PMIC
+ regulators
+
+---
+ .../boot/dts/exynos/exynos9810-starlte.dts    | 46 +++++++++++++++++++
+ 1 file changed, 46 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+index d45bbb3d7b..735ffc2729 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
++++ b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+@@ -94,6 +94,52 @@ &oscclk {
+ 	clock-frequency = <26000000>;
+ };
+ 
++
++&hsi2c_43 {
++	#address-cells = <1>;
++	#size-cells = <0>;
++	status = "okay";
++
++	s2dos05_pmic: pmic@60 {
++		compatible = "samsung,s2dos05";
++		reg = <0x60>;
++
++		regulators {
++			s2dos05_ldo1: ldo1 {
++				regulator-name = "s2dos05-ldo1";
++				regulator-min-microvolt = <1500000>;
++				regulator-max-microvolt = <2000000>;
++			};
++
++			s2dos05_ldo2: ldo2 {
++				regulator-name = "s2dos05-ldo2";
++				regulator-min-microvolt = <1800000>;
++				regulator-max-microvolt = <1800000>;
++				regulator-boot-on;
++			};
++
++			s2dos05_ldo3: ldo3 {
++				regulator-name = "s2dos05-ldo3";
++				regulator-min-microvolt = <3000000>;
++				regulator-max-microvolt = <3000000>;
++				regulator-boot-on;
++			};
++
++			s2dos05_ldo4: ldo4 {
++				regulator-name = "s2dos05-ldo4";
++				regulator-min-microvolt = <2700000>;
++				regulator-max-microvolt = <3775000>;
++			};
++
++			s2dos05_buck: buck {
++				regulator-name = "s2dos05-buck";
++				regulator-min-microvolt = <850000>;
++				regulator-max-microvolt = <2100000>;
++			};
++		};
++	};
++};
++
+ &pinctrl_alive {
+ 	key_power: key-power-pins {
+ 		samsung,pins = "gpa2-4";
+-- 
+2.43.0
+

@@ -1,0 +1,42 @@
+From cfeb00253522a0f9481783828e2b1ab84cc1ce58 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 9 Mar 2026 17:11:50 +0000
+Subject: [PATCH 4/7] arm64: dts: exynos: starlte: add PMIC IRQ and regulator
+ placeholder
+
+---
+ arch/arm64/boot/dts/exynos/exynos9810-starlte.dts | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+index fc0ddfee4c..d45bbb3d7b 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
++++ b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+@@ -82,6 +82,12 @@ framebuffer@cc000000 {
+ 			no-map;
+ 		};
+ 	};
++
++	/* Temporary placeholder until board PMIC regulator rails are modeled */
++	reg_placeholder: regulator-0 {
++		compatible = "regulator-fixed";
++		regulator-name = "reg-placeholder";
++	};
+ };
+ 
+ &oscclk {
+@@ -116,4 +122,11 @@ key_wink: key-wink-pins {
+ 		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
+ 		samsung,pin-drv = <EXYNOS5420_PIN_DRV_LV1>;
+ 	};
++
++	max77705_irq: max77705-irq-pins {
++		samsung,pins = "gpa1-6";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
++	};
+ };
+-- 
+2.43.0
+

@@ -1,0 +1,87 @@
+From d1ddc784cb5d0fc70cb7b037120eb56fdfe9e6d0 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 9 Mar 2026 17:31:32 +0000
+Subject: [PATCH 4/6] arm64: dts: exynos: starlte: enable external SD slot
+
+---
+ .../boot/dts/exynos/exynos9810-starlte.dts    | 59 +++++++++++++++++++
+ 1 file changed, 59 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+index fcee9e7547..2b948fb659 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
++++ b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+@@ -200,6 +200,28 @@ &ufs_phy {
+ 	status = "okay";
+ };
+ 
++&mmc {
++	pinctrl-0 = <&sd2_clk &sd2_cmd &sd2_bus1 &sd2_bus4 &sd2_cd>;
++	pinctrl-names = "default";
++
++	bus-width = <4>;
++	card-detect-delay = <200>;
++	cd-gpios = <&gpa1 5 GPIO_ACTIVE_LOW>;
++	clock-frequency = <800000000>;
++	disable-wp;
++	sd-uhs-sdr50;
++	sd-uhs-sdr104;
++
++	vmmc-supply = <&reg_placeholder>;
++	vqmmc-supply = <&reg_placeholder>;
++
++	samsung,dw-mshc-ciu-div = <3>;
++	samsung,dw-mshc-ddr-timing = <1 2>;
++	samsung,dw-mshc-sdr-timing = <0 3>;
++
++	status = "okay";
++};
++
+ &pinctrl_alive {
+ 	key_power: key-power-pins {
+ 		samsung,pins = "gpa2-4";
+@@ -235,4 +257,41 @@ max77705_irq: max77705-irq-pins {
+ 		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
+ 		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV1>;
+ 	};
++
++	sd2_cd: sd2-cd-pins {
++		samsung,pins = "gpa1-5";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV4>;
++	};
++};
++
++&pinctrl_fsys1 {
++	sd2_clk: sd2-clk-pins {
++		samsung,pins = "gpf1-0";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV4>;
++	};
++
++	sd2_cmd: sd2-cmd-pins {
++		samsung,pins = "gpf1-1";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV4>;
++	};
++
++	sd2_bus1: sd2-bus-width1-pins {
++		samsung,pins = "gpf1-2", "gpf1-3", "gpf1-4", "gpf1-5";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV4>;
++	};
++
++	sd2_bus4: sd2-bus-width4-pins {
++		samsung,pins = "gpf1-6", "gpf1-7", "gpf2-0", "gpf2-1";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV4>;
++	};
+ };
+-- 
+2.43.0
+

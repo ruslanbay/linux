@@ -1,0 +1,111 @@
+From 77357b3dfa70ab7930268809b21906dfa9b0b191 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 9 Mar 2026 17:07:14 +0000
+Subject: [PATCH 2/7] arm64: dts: exynos: add Exynos9810 USI controller blocks
+
+---
+ arch/arm64/boot/dts/exynos/exynos9810.dtsi | 81 ++++++++++++++++++++++
+ 1 file changed, 81 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810.dtsi b/arch/arm64/boot/dts/exynos/exynos9810.dtsi
+index 980b3043d2..c7a62d4b70 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810.dtsi
++++ b/arch/arm64/boot/dts/exynos/exynos9810.dtsi
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <dt-bindings/interrupt-controller/arm-gic.h>
++#include <dt-bindings/soc/samsung,exynos-usi.h>
+ 
+ / {
+ 	compatible = "samsung,exynos9810";
+@@ -291,6 +292,86 @@ pinctrl_aud: pinctrl@17c60000 {
+ 			compatible = "samsung,exynos9810-pinctrl";
+ 			reg = <0x17c60000 0x1000>;
+ 		};
++
++		usi_hsi2c_10: usi@104b00c0 {
++			compatible = "samsung,exynos850-usi";
++			reg = <0x104b00c0 0x20>;
++			samsung,mode = <USI_MODE_I2C>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges;
++			status = "disabled";
++
++			hsi2c_10: i2c@104b0000 {
++				compatible = "samsung,exynos850-hsi2c",
++					     "samsung,exynosautov9-hsi2c";
++				reg = <0x104b0000 0xc0>;
++				interrupts = <GIC_SPI 404 IRQ_TYPE_LEVEL_HIGH>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++				status = "disabled";
++			};
++		};
++
++		usi_hsi2c_11: usi@108e00c0 {
++			compatible = "samsung,exynos850-usi";
++			reg = <0x108e00c0 0x20>;
++			samsung,mode = <USI_MODE_I2C>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges;
++			status = "disabled";
++
++			hsi2c_11: i2c@108e0000 {
++				compatible = "samsung,exynos850-hsi2c",
++					     "samsung,exynosautov9-hsi2c";
++				reg = <0x108e0000 0xc0>;
++				interrupts = <GIC_SPI 432 IRQ_TYPE_LEVEL_HIGH>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++				status = "disabled";
++			};
++		};
++
++		usi_hsi2c_43: usi@143500c0 {
++			compatible = "samsung,exynos850-usi";
++			reg = <0x143500c0 0x20>;
++			samsung,mode = <USI_MODE_I2C>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges;
++			status = "disabled";
++
++			hsi2c_43: i2c@14350000 {
++				compatible = "samsung,exynos850-hsi2c",
++					     "samsung,exynosautov9-hsi2c";
++				reg = <0x14350000 0xc0>;
++				interrupts = <GIC_SPI 5 IRQ_TYPE_LEVEL_HIGH>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++				status = "disabled";
++			};
++		};
++
++		usi_hsi2c_44: usi@143600c0 {
++			compatible = "samsung,exynos850-usi";
++			reg = <0x143600c0 0x20>;
++			samsung,mode = <USI_MODE_I2C>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges;
++			status = "disabled";
++
++			hsi2c_44: i2c@14360000 {
++				compatible = "samsung,exynos850-hsi2c",
++					     "samsung,exynosautov9-hsi2c";
++				reg = <0x14360000 0xc0>;
++				interrupts = <GIC_SPI 6 IRQ_TYPE_LEVEL_HIGH>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++				status = "disabled";
++			};
++		};
+ 	};
+ 
+ 	timer {
+-- 
+2.43.0
+
