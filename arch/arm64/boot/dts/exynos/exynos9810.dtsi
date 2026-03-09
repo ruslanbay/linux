@@ -509,6 +509,17 @@
 			#phy-cells = <0>;
 			status = "disabled";
 		};
+
+		mmc: mmc@11500000 {
+			compatible = "samsung,exynos7-dw-mshc";
+			reg = <0x11500000 0x2000>;
+			interrupts = <GIC_SPI 249 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&oscclk>, <&oscclk>;
+			clock-names = "biu", "ciu";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
 	};
 
 	timer {
