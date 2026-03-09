@@ -122,6 +122,9 @@ select:
           - rockchip,rv1126-qos
           - st,spear1340-misc
           - stericsson,nomadik-pmu
+          - samsung,exynos9810-peric0-sysreg
+          - samsung,exynos9810-peric1-sysreg
+          - samsung,exynos9810-fsys1-sysreg
           - starfive,jh7100-sysmain
           - ti,am62-opp-efuse-table
           - ti,am62-usb-phy-ctrl
@@ -235,6 +238,9 @@ properties:
               - rockchip,rv1126-qos
               - st,spear1340-misc
               - stericsson,nomadik-pmu
+              - samsung,exynos9810-peric0-sysreg
+              - samsung,exynos9810-peric1-sysreg
+              - samsung,exynos9810-fsys1-sysreg
               - starfive,jh7100-sysmain
               - ti,am62-opp-efuse-table
               - ti,am62-usb-phy-ctrl

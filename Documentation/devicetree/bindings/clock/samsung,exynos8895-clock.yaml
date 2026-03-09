@@ -32,8 +32,11 @@ properties:
     enum:
       - samsung,exynos8895-cmu-fsys0
       - samsung,exynos8895-cmu-fsys1
+      - samsung,exynos9810-cmu-fsys1
       - samsung,exynos8895-cmu-peric0
+      - samsung,exynos9810-cmu-peric0
       - samsung,exynos8895-cmu-peric1
+      - samsung,exynos9810-cmu-peric1
       - samsung,exynos8895-cmu-peris
       - samsung,exynos8895-cmu-top
 
@@ -89,7 +92,9 @@ allOf:
       properties:
         compatible:
           contains:
-            const: samsung,exynos8895-cmu-fsys1
+            enum:
+              - samsung,exynos8895-cmu-fsys1
+              - samsung,exynos9810-cmu-fsys1
 
     then:
       properties:
@@ -113,7 +118,9 @@ allOf:
       properties:
         compatible:
           contains:
-            const: samsung,exynos8895-cmu-peric0
+            enum:
+              - samsung,exynos8895-cmu-peric0
+              - samsung,exynos9810-cmu-peric0
 
     then:
       properties:
@@ -141,7 +148,9 @@ allOf:
       properties:
         compatible:
           contains:
-            const: samsung,exynos8895-cmu-peric1
+            enum:
+              - samsung,exynos8895-cmu-peric1
+              - samsung,exynos9810-cmu-peric1
 
     then:
       properties:

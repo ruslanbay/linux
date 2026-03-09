@@ -171,6 +171,57 @@
 			reg = <0x10000000 0x100>;
 		};
 
+		cmu_peric0: clock-controller@10400000 {
+			compatible = "samsung,exynos9810-cmu-peric0";
+			reg = <0x10400000 0x8000>;
+			#clock-cells = <1>;
+			clocks = <&oscclk>, <&oscclk>, <&oscclk>,
+				 <&oscclk>, <&oscclk>, <&oscclk>,
+				 <&oscclk>;
+			clock-names = "oscclk", "bus", "uart",
+				      "usi0", "usi1", "usi2",
+				      "usi3";
+		};
+
+		cmu_peric1: clock-controller@10800000 {
+			compatible = "samsung,exynos9810-cmu-peric1";
+			reg = <0x10800000 0x8000>;
+			#clock-cells = <1>;
+			clocks = <&oscclk>, <&oscclk>, <&oscclk>, <&oscclk>,
+				 <&oscclk>, <&oscclk>, <&oscclk>, <&oscclk>,
+				 <&oscclk>, <&oscclk>, <&oscclk>, <&oscclk>,
+				 <&oscclk>, <&oscclk>, <&oscclk>, <&oscclk>;
+			clock-names = "oscclk", "bus", "speedy", "cam0",
+				      "cam1", "uart", "usi4", "usi5",
+				      "usi6", "usi7", "usi8", "usi9",
+				      "usi10", "usi11", "usi12", "usi13";
+		};
+
+		cmu_fsys1: clock-controller@11400000 {
+			compatible = "samsung,exynos9810-cmu-fsys1";
+			reg = <0x11400000 0x8000>;
+			#clock-cells = <1>;
+			clocks = <&oscclk>, <&oscclk>, <&oscclk>,
+				 <&oscclk>, <&oscclk>;
+			clock-names = "oscclk", "bus", "pcie",
+				      "ufs", "mmc";
+		};
+
+		syscon_peric0: syscon@10420000 {
+			compatible = "samsung,exynos9810-peric0-sysreg", "syscon";
+			reg = <0x10420000 0x2000>;
+		};
+
+		syscon_peric1: syscon@10820000 {
+			compatible = "samsung,exynos9810-peric1-sysreg", "syscon";
+			reg = <0x10820000 0x2000>;
+		};
+
+		syscon_fsys1: syscon@11420000 {
+			compatible = "samsung,exynos9810-fsys1-sysreg", "syscon";
+			reg = <0x11420000 0x2000>;
+		};
+
 		gic: interrupt-controller@10101000 {
 			compatible = "arm,gic-400";
 			reg = <0x10101000 0x1000>,
