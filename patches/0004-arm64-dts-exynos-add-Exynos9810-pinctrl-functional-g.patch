@@ -1,0 +1,158 @@
+From 28fa53e394582ed31e100d9726a4fd14d92a5dc6 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 9 Mar 2026 15:40:32 +0000
+Subject: [PATCH 4/6] arm64: dts: exynos: add Exynos9810 pinctrl functional
+ groups
+
+---
+ .../boot/dts/exynos/exynos9810-pinctrl.dtsi   | 106 ++++++++++++++++++
+ 1 file changed, 106 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810-pinctrl.dtsi b/arch/arm64/boot/dts/exynos/exynos9810-pinctrl.dtsi
+index 88091bf09e..8e00426fde 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810-pinctrl.dtsi
++++ b/arch/arm64/boot/dts/exynos/exynos9810-pinctrl.dtsi
+@@ -100,6 +100,26 @@ gpq0: gpq0-gpio-bank {
+ 		interrupt-controller;
+ 		#interrupt-cells = <2>;
+ 	};
++
++	pcie_wake: pcie-wake-pins {
++		samsung,pins = "gpa3-2";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_INPUT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++	};
++
++	wlan_host_wake: wlan-host-wake-pins {
++		samsung,pins = "gpa0-7";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_DOWN>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++		samsung,pin-pud-pdn = <EXYNOS_PIN_PULL_DOWN>;
++	};
++
++	bt_hostwake: bt-hostwake-pins {
++		samsung,pins = "gpa2-3";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_INPUT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++	};
+ };
+ 
+ &pinctrl_aud {
+@@ -356,6 +376,20 @@ gpf0: gpf0-gpio-bank {
+ 		interrupt-controller;
+ 		#interrupt-cells = <2>;
+ 	};
++
++	ufs_rst_n: ufs-rst-n-pins {
++		samsung,pins = "gpf0-1";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_3>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++	};
++
++	ufs_refclk_out: ufs-refclk-out-pins {
++		samsung,pins = "gpf0-0";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_3>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++	};
+ };
+ 
+ &pinctrl_fsys1 {
+@@ -374,6 +408,38 @@ gpf2: gpf2-gpio-bank {
+ 		interrupt-controller;
+ 		#interrupt-cells = <2>;
+ 	};
++
++	pcie0_clkreq: pcie0-clkreq-pins {
++		samsung,pins = "gpf2-0";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV3>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++		samsung,pin-pud-pdn = <EXYNOS_PIN_PULL_UP>;
++	};
++
++	pcie0_perst: pcie0-perst-pins {
++		samsung,pins = "gpf2-2";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV3>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++	};
++
++	pcie1_clkreq: pcie1-clkreq-pins {
++		samsung,pins = "gpf2-3";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV3>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++		samsung,pin-pud-pdn = <EXYNOS_PIN_PULL_UP>;
++	};
++
++	pcie1_perst: pcie1-perst-pins {
++		samsung,pins = "gpf2-5";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV3>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++	};
+ };
+ 
+ &pinctrl_peric0 {
+@@ -432,6 +498,22 @@ gpp3: gpp3-gpio-bank {
+ 		interrupt-controller;
+ 		#interrupt-cells = <2>;
+ 	};
++
++	cfg_wlanen: cfg-wlanen-pins {
++		samsung,pins = "gpg0-5";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-drv = <EXYNOS7_PIN_DRV_LV3>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++	};
++
++	bt_btwake: bt-btwake-pins {
++		samsung,pins = "gpg2-0";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
++		samsung,pin-pud-pdn = <EXYNOS_PIN_PULL_NONE>;
++	};
+ };
+ 
+ &pinctrl_peric1 {
+@@ -490,6 +572,30 @@ gpp6: gpp6-gpio-bank {
+ 		interrupt-controller;
+ 		#interrupt-cells = <2>;
+ 	};
++
++	fimc_is_mclk0_fn: fimc-is-mclk0-fn-pins {
++		samsung,pins = "gpc1-4";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++	};
++
++	fimc_is_mclk1_fn: fimc-is-mclk1-fn-pins {
++		samsung,pins = "gpc1-5";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++	};
++
++	fimc_is_mclk2_fn: fimc-is-mclk2-fn-pins {
++		samsung,pins = "gpc1-6";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++	};
++
++	fimc_is_mclk3_fn: fimc-is-mclk3-fn-pins {
++		samsung,pins = "gpc1-7";
++		samsung,pin-function = <EXYNOS_PIN_FUNC_2>;
++		samsung,pin-pud = <EXYNOS_PIN_PULL_NONE>;
++	};
+ };
+ 
+ &pinctrl_vts {
+-- 
+2.43.0
+

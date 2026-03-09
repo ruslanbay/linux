@@ -1,0 +1,36 @@
+From 626c274f150f4323570627b3fa9a78647176b3a6 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 9 Mar 2026 15:41:12 +0000
+Subject: [PATCH 6/6] arm64: dts: exynos: starlte: add aliases and DT bindings
+ includes
+
+---
+ arch/arm64/boot/dts/exynos/exynos9810-starlte.dts | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+index dac4476db2..1d7fcdb904 100644
+--- a/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
++++ b/arch/arm64/boot/dts/exynos/exynos9810-starlte.dts
+@@ -10,12 +10,18 @@
+ #include "exynos9810.dtsi"
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/input/input.h>
++#include <dt-bindings/interrupt-controller/irq.h>
++#include <dt-bindings/usb/pd.h>
+ 
+ / {
+ 	model = "Samsung Galaxy S9 (SM-G960F)";
+ 	compatible = "samsung,starlte", "samsung,exynos9810";
+ 	chassis-type = "handset";
+ 
++	aliases {
++		mmc0 = &mmc;
++	};
++
+ 	chosen {
+ 		#address-cells = <2>;
+ 		#size-cells = <1>;
+-- 
+2.43.0
+
