@@ -125,6 +125,13 @@
 		gpio = <&gpf0 2 GPIO_ACTIVE_HIGH>;
 	};
 
+	usb_vbus_reg: regulator-2 {
+		compatible = "regulator-fixed";
+		regulator-name = "usb-vbus";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+	};
+
 	battery: battery {
 		compatible = "simple-battery";
 		constant-charge-current-max-microamp = <2150000>;
@@ -346,6 +353,7 @@
 		label = "USB-C";
 		data-role = "device";
 		power-role = "sink";
+		vbus-supply = <&usb_vbus_reg>;
 		status = "disabled";
 	};
 };
