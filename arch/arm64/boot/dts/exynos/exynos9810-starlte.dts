@@ -18,12 +18,16 @@
 	compatible = "samsung,starlte", "samsung,exynos9810";
 	chassis-type = "handset";
 
+	aliases {
+		display0 = &framebuffer0;
+	};
+
 	chosen {
 		#address-cells = <2>;
 		#size-cells = <1>;
 		ranges;
 
-		framebuffer@cc000000 {
+		framebuffer0: framebuffer@cc000000 {
 			compatible = "simple-framebuffer";
 			memory-region = <&cont_splash_mem>;
 			width = <1440>;
