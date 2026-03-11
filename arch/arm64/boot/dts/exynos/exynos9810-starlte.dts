@@ -153,12 +153,16 @@
 		regulators {
 			s2dos05_ldo1: ldo1 {
 				regulator-name = "s2dos05-ldo1";
+				regulator-active-discharge = <1>;
+				regulator-enable-ramp-delay = <12000>;
 				regulator-min-microvolt = <1500000>;
 				regulator-max-microvolt = <2000000>;
 			};
 
 			s2dos05_ldo2: ldo2 {
 				regulator-name = "s2dos05-ldo2";
+				regulator-active-discharge = <1>;
+				regulator-enable-ramp-delay = <12000>;
 				regulator-min-microvolt = <1800000>;
 				regulator-max-microvolt = <1800000>;
 				regulator-boot-on;
@@ -166,6 +170,8 @@
 
 			s2dos05_ldo3: ldo3 {
 				regulator-name = "s2dos05-ldo3";
+				regulator-active-discharge = <1>;
+				regulator-enable-ramp-delay = <12000>;
 				regulator-min-microvolt = <3000000>;
 				regulator-max-microvolt = <3000000>;
 				regulator-boot-on;
@@ -173,12 +179,16 @@
 
 			s2dos05_ldo4: ldo4 {
 				regulator-name = "s2dos05-ldo4";
+				regulator-active-discharge = <1>;
+				regulator-enable-ramp-delay = <12000>;
 				regulator-min-microvolt = <2700000>;
 				regulator-max-microvolt = <3775000>;
 			};
 
 			s2dos05_buck: buck {
 				regulator-name = "s2dos05-buck";
+				regulator-active-discharge = <1>;
+				regulator-enable-ramp-delay = <12000>;
 				regulator-min-microvolt = <850000>;
 				regulator-max-microvolt = <2100000>;
 			};
