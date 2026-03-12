@@ -23,6 +23,7 @@
 #include <linux/usb.h>
 #include <linux/usb/audio.h>
 #include <linux/usb/audio-v2.h>
+#include <linux/usb/exynos_usb_audio.h>
 
 #include <sound/core.h>
 #include <sound/info.h>
@@ -220,6 +221,13 @@ static int __uac_clock_find_source(struct snd_usb_audio *chip,
 			return -EINVAL;
 		}
 
+		if ((size_t)&selector->baCSourceID[ret - 1] >=
+				(size_t)(chip->ctrl_intf->extra + chip->ctrl_intf->extralen)) {
+			usb_audio_err(chip,
+				"%s(): error. out of boundary, ret %d\n",
+				__func__, ret);
+			return -EINVAL;
+		}
 		cur = ret;
 		ret = __uac_clock_find_source(chip, selector->baCSourceID[ret - 1],
 					       visited, validate);
@@ -233,6 +241,13 @@ static int __uac_clock_find_source(struct snd_usb_audio *chip,
 			if (i == cur)
 				continue;
 
+			if ((size_t)&selector->baCSourceID[i - 1] >=
+					(size_t)(chip->ctrl_intf->extra + chip->ctrl_intf->extralen)) {
+				usb_audio_err(chip,
+					"%s(): error. out of boundary, i %d\n",
+					__func__, i);
+				break;
+			}
 			ret = __uac_clock_find_source(chip, selector->baCSourceID[i - 1],
 				visited, true);
 			if (ret < 0)
@@ -366,6 +381,29 @@ static int set_sample_rate_v2(struct snd_usb_audio *chip, int iface,
 	int clock;
 	bool writeable;
 	struct uac_clock_source_descriptor *cs_desc;
+	unsigned char ep;
+	unsigned char numEndpoints;
+	int direction;
+	int i;
+
+	numEndpoints = get_iface_desc(alts)->bNumEndpoints;
+	if (numEndpoints < 1)
+		return -EINVAL;
+	if (numEndpoints == 1) {
+		ep = get_endpoint(alts, 0)->bEndpointAddress;
+	} else {
+		for (i = 0; i < numEndpoints; i++) {
+			ep = get_endpoint(alts, i)->bmAttributes;
+			if (!(ep & 0x30)) {
+				ep = get_endpoint(alts, i)->bEndpointAddress;
+				break;
+			}
+		}
+	}
+	if (ep & 0x80)
+		direction = 1;
+	else
+		direction = 0;
 
 	clock = snd_usb_clock_find_source(chip, fmt->clock, true);
 	if (clock < 0)
@@ -412,8 +450,15 @@ static int set_sample_rate_v2(struct snd_usb_audio *chip, int iface,
 	 * interface is active. */
 	if (rate != prev_rate) {
 		usb_set_interface(dev, iface, 0);
+#ifdef CONFIG_SND_EXYNOS_USB_AUDIO
+		exynos_usb_audio_setintf(dev, fmt->iface, 0, direction);
+#endif
 		snd_usb_set_interface_quirk(dev);
 		usb_set_interface(dev, iface, fmt->altsetting);
+#ifdef CONFIG_SND_EXYNOS_USB_AUDIO
+		exynos_usb_audio_setintf(dev, fmt->iface,
+					fmt->altsetting, direction);
+#endif
 		snd_usb_set_interface_quirk(dev);
 	}
 
