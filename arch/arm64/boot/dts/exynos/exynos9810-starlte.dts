@@ -262,7 +262,6 @@
 		#interrupt-cells = <1>;
 		interrupt-parent = <&gpa1>;
 		interrupts = <2 IRQ_TYPE_LEVEL_LOW>;
-		wakeup-source;
 		pinctrl-0 = <&max77705_irq>;
 		pinctrl-names = "default";
 	};
