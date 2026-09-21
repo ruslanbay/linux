@@ -37,6 +37,11 @@ static bool use_stream_stop;
 module_param(use_stream_stop, bool, 0660);
 MODULE_PARM_DESC(use_stream_stop, "Use STOP command if running in CSI capture mode");
 
+static bool debug_capture_links;
+module_param(debug_capture_links, bool, 0444);
+MODULE_PARM_DESC(debug_capture_links,
+		 "Also link the debug capture nodes (per-CSI-2 MIPI packet dumps, CSI2 BE/ISA) into the media graph; their output is not a clean raster (default 0)");
+
 const struct ipu_isys_pixelformat ipu_isys_pfmts[] = {
 	{V4L2_PIX_FMT_Y10, 10, 10, 0, MEDIA_BUS_FMT_Y10_1X10,
 	 IPU_FW_ISYS_FRAME_FORMAT_RAW10},
@@ -2364,12 +2369,25 @@ int ipu_isys_video_init(struct ipu_isys_video *av,
 	if (rval)
 		goto out_media_entity_cleanup;
 
-	if (pad_flags & MEDIA_PAD_FL_SINK)
+	if (av->debug_link_only && !debug_capture_links) {
+		/* Debug tap: leave unlinked, see ipu_isys_video::debug_link_only */
+		rval = 0;
+		/*
+		 * With no link created, the node has no remote subdev, and the
+		 * ->try_fmt_vid_mplane() implementations below walk
+		 * entity.links with list_first_entry() -- which on an empty
+		 * list yields container_of(head), i.e. a wild pointer. Skip
+		 * the format probe entirely; an unlinked tap cannot capture.
+		 */
+		mutex_unlock(&av->mutex);
+		return 0;
+	} else if (pad_flags & MEDIA_PAD_FL_SINK) {
 		rval = media_create_pad_link(entity, pad,
 					     &av->vdev.entity, 0, flags);
-	else
+	} else {
 		rval = media_create_pad_link(&av->vdev.entity, 0, entity,
 					     pad, flags);
+	}
 	if (rval) {
 		dev_info(&av->isys->adev->dev, "can't create link\n");
 		goto out_media_entity_cleanup;
