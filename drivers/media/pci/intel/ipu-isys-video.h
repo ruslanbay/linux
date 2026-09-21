@@ -68,6 +68,15 @@ struct ipu_isys_pipeline {
 	struct media_pipeline pipe;
 	struct media_pad *external;
 	atomic_t sequence;
+	/* frames actually delivered by fw (PIN_DATA_READY responses) */
+	atomic_t frames_done;
+	/*
+	 * Stream-start verification in progress: STR2MMIO-errored
+	 * buffers are parked back on the incoming queue for re-feeding
+	 * to the fw instead of being returned to user space, so the
+	 * fw never starves while the D-PHY relock bounces run.
+	 */
+	atomic_t verify_active;
 	int last_sequence;
 	unsigned int seq_index;
 	struct sequence_info seq[IPU_ISYS_MAX_PARALLEL_SOF];

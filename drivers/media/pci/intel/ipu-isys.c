@@ -1165,6 +1165,16 @@ int isys_isr_one(struct ipu_bus_device *adev)
 		complete(&pipe->stream_stop_completion);
 		break;
 	case IPU_FW_ISYS_RESP_TYPE_PIN_DATA_READY:
+		/*
+		 * On a failed D-PHY lock the fw still delivers PIN_DATA_READY
+		 * for every (corrupt) frame, but with
+		 * IPU_FW_ISYS_ERROR_HW_REPORTED_STR2MMIO set; those buffers
+		 * reach user space only in the error state. Count only clean
+		 * deliveries so the stream-start health check can't mistake
+		 * an error storm for working capture.
+		 */
+		if (!resp->error_info.error)
+			atomic_inc(&pipe->frames_done);
 		if (resp->pin_id < IPU_ISYS_OUTPUT_PINS &&
 		    pipe->output_pins[resp->pin_id].pin_ready)
 			pipe->output_pins[resp->pin_id].pin_ready(pipe, resp);
