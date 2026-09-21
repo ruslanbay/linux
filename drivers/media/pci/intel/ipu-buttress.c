@@ -908,6 +908,13 @@ int ipu_buttress_authenticate(struct ipu_device *isp)
 	dev_info(&isp->pdev->dev, "CSE authenticate_run done\n");
 
 iunit_power_off:
+	/*
+	 * Balance the pm_runtime_get_sync() above: without this every
+	 * authentication (one per video node open) leaks a reference on
+	 * the psys iommu, so neither MMU ever runtime-suspends and the
+	 * isys power island can never be cycled after an error.
+	 */
+	pm_runtime_put(&isp->psys_iommu->dev);
 	mutex_unlock(&b->auth_mutex);
 
 	return rval;
