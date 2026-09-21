@@ -201,11 +201,17 @@ static const struct ipu_isys_pixelformat *ipu_isys_tpg_try_fmt(
 					struct ipu_isys_video *av,
 					struct v4l2_pix_format_mplane *mpix)
 {
-	struct media_link *link = list_first_entry(&av->vdev.entity.links,
-						   struct media_link, list);
-	struct v4l2_subdev *sd =
-		media_entity_to_v4l2_subdev(link->source->entity);
+	struct media_link *link;
+	struct v4l2_subdev *sd;
 	struct ipu_isys_tpg *tpg;
+
+	/* See csi2_try_fmt(): guard against an empty entity link list. */
+	if (list_empty(&av->vdev.entity.links))
+		return NULL;
+
+	link = list_first_entry(&av->vdev.entity.links,
+				struct media_link, list);
+	sd = media_entity_to_v4l2_subdev(link->source->entity);
 
 	if (!sd)
 		return NULL;
