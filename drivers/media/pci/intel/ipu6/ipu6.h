@@ -33,7 +33,9 @@ struct ipu6_bus_device;
 #define IPU_VERSION_6EP_MTL	BIT(3) /* MTL */
 #define IPU_VERSION_7		BIT(4) /* LNL */
 #define IPU_VERSION_7P5		BIT(5) /* PTL */
+#define IPU_VERSION_4P		BIT(6) /* ICL */
 
+#define IS_IPU4P(isp)		((isp)->hw_ver & IPU_VERSION_4P)
 #define IS_IPU6_TGL(isp)	((isp)->hw_ver & IPU_VERSION_6)
 #define IS_IPU6SE(isp)		((isp)->hw_ver & IPU_VERSION_6SE)
 #define IS_IPU6EP(isp)		((isp)->hw_ver & IPU_VERSION_6EP)
