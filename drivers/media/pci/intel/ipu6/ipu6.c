@@ -140,6 +140,28 @@ static const struct ipu6_buttress_ctrl ipu7_psys_buttress_ctrl = {
 	.pwr_sts_off = IPU6_BUTTRESS_PWR_STATE_DN_DONE,
 };
 
+static const struct ipu6_buttress_ctrl ipu4p_isys_buttress_ctrl = {
+	.subsys_id = IPU_ISYS,
+	.ratio = IPU4P_IS_FREQ_CTL_DIVISOR,
+	.qos_floor = 0,
+	.freq_ctl = BUTTRESS_REG_IS_FREQ_CTL,
+	.pwr_sts_shift = IPU4P_BUTTRESS_PWR_STATE_IS_PWR_FSM_SHIFT,
+	.pwr_sts_mask = IPU4P_BUTTRESS_PWR_STATE_IS_PWR_FSM_MASK,
+	.pwr_sts_on = IPU4P_BUTTRESS_PWR_STATE_IS_PWR_FSM_IS_RDY,
+	.pwr_sts_off = IPU4P_BUTTRESS_PWR_STATE_IS_PWR_FSM_IDLE,
+};
+
+static const struct ipu6_buttress_ctrl ipu4p_psys_buttress_ctrl = {
+	.subsys_id = IPU_PSYS,
+	.ratio = IPU4P_PS_FREQ_CTL_DEFAULT_RATIO,
+	.qos_floor = 0,
+	.freq_ctl = BUTTRESS_REG_PS_FREQ_CTL,
+	.pwr_sts_shift = IPU4P_BUTTRESS_PWR_STATE_PS_PWR_FSM_SHIFT,
+	.pwr_sts_mask = IPU4P_BUTTRESS_PWR_STATE_PS_PWR_FSM_MASK,
+	.pwr_sts_on = IPU4P_BUTTRESS_PWR_STATE_PS_PWR_FSM_PS_PWR_UP,
+	.pwr_sts_off = IPU4P_BUTTRESS_PWR_STATE_PS_PWR_FSM_IDLE,
+};
+
 static const struct ipu6_buttress_registers ipu6_buttress_regs = {
 	/* Registers */
 	.irq_status	= BUTTRESS_REG_ISR_STATUS,
@@ -374,6 +396,15 @@ static void ipu6_internal_pdata_init(struct ipu6_device *isp)
 	if (IS_IPU7(isp)) {
 		isys_ipdata.csi2.gpreg = IPU7_IS_IO_CSI2_GPREGS_BASE;
 		isys_ipdata.csi2.nports = 4;
+	}
+
+	if (IS_IPU4P(isp)) {
+		isys_ipdata.hw_variant.offset = IPU4P_ISYS_OFFSET;
+		isys_ipdata.hw_variant.spc_offset = IPU4P_ISYS_SPC_OFFSET;
+		isys_ipdata.hw_variant.dmem_offset = IPU4P_ISYS_DMEM_OFFSET;
+		psys_ipdata.hw_variant.offset = IPU4P_PSYS_OFFSET;
+		psys_ipdata.hw_variant.spc_offset = IPU4P_PSYS_SPC_OFFSET;
+		psys_ipdata.hw_variant.dmem_offset = IPU4P_PSYS_DMEM_OFFSET;
 	}
 }
 
@@ -631,6 +662,13 @@ static int ipu6_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	psys_ctrl = &ipu6_psys_buttress_ctrl;
 
 	switch (id->device) {
+	case PCI_DEVICE_ID_INTEL_IPU4P:
+		isp->hw_ver = IPU_VERSION_4P;
+		isp->cpd_fw_name = IPU4P_FIRMWARE_NAME;
+		isp->buttress.regs = &ipu6_buttress_regs;
+		isys_ctrl = &ipu4p_isys_buttress_ctrl;
+		psys_ctrl = &ipu4p_psys_buttress_ctrl;
+		break;
 	case PCI_DEVICE_ID_INTEL_IPU6:
 		isp->hw_ver = IPU_VERSION_6;
 		isp->cpd_fw_name = IPU6_FIRMWARE_NAME;

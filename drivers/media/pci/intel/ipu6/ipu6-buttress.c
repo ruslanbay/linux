@@ -601,6 +601,43 @@ static int __ipu6_power(struct device *dev,
 	return ret;
 }
 
+static int __ipu4p_power(struct device *dev,
+			const struct ipu6_buttress_ctrl *ctrl, bool on)
+{
+	struct ipu6_device *isp = to_ipu6_bus_device(dev)->isp;
+	u32 pwr_sts, val;
+	int ret;
+
+	if (!on) {
+		val = 0;
+		pwr_sts = ctrl->pwr_sts_off << ctrl->pwr_sts_shift;
+	} else {
+		u32 shift = (ctrl->subsys_id == IPU_ISYS) ?
+			    IPU4P_BUTTRESS_IS_FREQ_CTL_RATIO_SHIFT :
+			    IPU4P_BUTTRESS_PS_FREQ_CTL_RATIO_SHIFT;
+
+		val = BUTTRESS_FREQ_CTL_START |
+		      (ctrl->ratio << shift) |
+		      FIELD_PREP(BUTTRESS_FREQ_CTL_QOS_FLOOR_MASK, ctrl->qos_floor);
+
+		if (ctrl->subsys_id == IPU_PSYS)
+			val |= BIT(IPU4P_BUTTRESS_PS_FREQ_CTL_OVRD_SHIFT);
+
+		pwr_sts = ctrl->pwr_sts_on << ctrl->pwr_sts_shift;
+	}
+
+	writel(val, isp->base + ctrl->freq_ctl);
+
+	ret = readl_poll_timeout(isp->base + isp->buttress.regs->pwr_status,
+				 val, (val & ctrl->pwr_sts_mask) == pwr_sts,
+				 100, BUTTRESS_POWER_TIMEOUT_US);
+	if (ret)
+		dev_err(&isp->pdev->dev,
+			"Change power status timeout with 0x%x\n", val);
+
+	return ret;
+}
+
 int ipu6_buttress_power(struct device *dev,
 			const struct ipu6_buttress_ctrl *ctrl, bool on)
 {
@@ -615,6 +652,8 @@ int ipu6_buttress_power(struct device *dev,
 	if (IS_IPU7(isp))
 		ret = on ? __ipu7_power_on(dev, ctrl) :
 			   __ipu7_power_off(dev, ctrl);
+	else if (IS_IPU4P(isp))
+		ret = __ipu4p_power(dev, ctrl, on);
 	else
 		ret = __ipu6_power(dev, ctrl, on);
 
@@ -824,6 +863,8 @@ int ipu6_buttress_authenticate(struct ipu6_device *isp)
 
 	void __iomem *base = IS_IPU7(isp) ?
 			     isp->base + IPU7_BUTTRESS_REG_FW_BOOT_PARAMS7 :
+			     IS_IPU4(isp) ?
+			     psys_pdata->base + IPU4_BOOTLOADER_STATUS_OFFSET :
 			     psys_pdata->base + BOOTLOADER_STATUS_OFFSET;
 
 	ret = readl_poll_timeout(base, data, data == BOOTLOADER_MAGIC_KEY, 500,
@@ -1089,9 +1130,10 @@ int ipu6_buttress_init(struct ipu6_device *isp)
 		ipu7_buttress_setup(isp);
 		b->ref_clk = 384;
 	} else {
-		dev_dbg(&isp->pdev->dev, "IPU6 touch 0x%x mask 0x%x\n",
-			readl(isp->base + BUTTRESS_REG_SECURITY_TOUCH),
-			readl(isp->base + BUTTRESS_REG_CAMERA_MASK));
+		if (!IS_IPU4(isp))
+			dev_dbg(&isp->pdev->dev, "IPU6 touch 0x%x mask 0x%x\n",
+				readl(isp->base + BUTTRESS_REG_SECURITY_TOUCH),
+				readl(isp->base + BUTTRESS_REG_CAMERA_MASK));
 
 		writel(b->regs->irq_all, isp->base + b->regs->irq_clear);
 		writel(b->regs->irq_all, isp->base + b->regs->irq_enable);
