@@ -665,6 +665,8 @@ static int ipu6_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	case PCI_DEVICE_ID_INTEL_IPU4P:
 		isp->hw_ver = IPU_VERSION_4P;
 		isp->cpd_fw_name = IPU4P_FIRMWARE_NAME;
+		isp->cpd_metadata_cmpnt_size =
+			sizeof(struct ipu6se_cpd_metadata_cmpnt);
 		isp->buttress.regs = &ipu6_buttress_regs;
 		isys_ctrl = &ipu4p_isys_buttress_ctrl;
 		psys_ctrl = &ipu4p_psys_buttress_ctrl;
