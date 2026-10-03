@@ -29,6 +29,7 @@ struct ipu6_fw_com_cfg {
 	void (*cell_start)(struct ipu6_bus_device *adev);
 
 	unsigned int buttress_boot_offset;
+	bool dmem_syscom;
 };
 
 void *ipu6_fw_com_prepare(struct ipu6_fw_com_cfg *cfg,
