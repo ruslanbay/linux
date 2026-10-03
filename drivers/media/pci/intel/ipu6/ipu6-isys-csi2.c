@@ -25,6 +25,7 @@
 #include "ipu4p-fw-isys.h"
 #include "ipu6-isys-subdev.h"
 #include "ipu6-platform-isys-csi2-reg.h"
+#include "ipu4p-isys-csi2-regs.h"
 #include "ipu7-isys-csi2-regs.h"
 
 static const u32 csi2_supported_codes[] = {
@@ -81,6 +82,25 @@ static const struct ipu6_csi2_error dphy_rx_errors[] = {
 	{ "Lane deskew", false },
 	{ "SOT sync error", false },
 	{ "HSIDLE detected", false }
+};
+
+static const struct ipu6_csi2_error ipu4p_csi2_errors[] = {
+	{ "Single packet header error corrected", true },
+	{ "Multiple packet header errors detected", true },
+	{ "Payload checksum (CRC) error", true },
+	{ "FIFO overflow", false },
+	{ "Reserved short packet data type detected", true },
+	{ "Reserved long packet data type detected", true },
+	{ "Incomplete long packet detected", false },
+	{ "Frame sync error", false },
+	{ "Line sync error", false },
+	{ "DPHY recoverable synchronization error", true },
+	{ "DPHY non-recoverable synchronization error", false },
+	{ "Escape mode error", true },
+	{ "Escape mode trigger event", true },
+	{ "Escape mode ultra-low power state for data lane(s)", true },
+	{ "Escape mode ultra-low power state exit for clock lane", true },
+	{ "Inter-frame short packet discarded", true },
 };
 
 s64 ipu6_isys_csi2_get_link_freq(struct ipu6_isys_csi2 *csi2)
@@ -210,12 +230,81 @@ void ipu6_isys_register_errors(struct ipu6_isys_csi2 *csi2)
 	csi2->receiver_errors |= irq & mask;
 }
 
+u32 ipu4p_isys_register_errors(struct ipu6_isys_csi2 *csi2)
+{
+	void __iomem *base = csi2->isys->pdata->base;
+	u32 offset = IPU4P_ISYS_CSI_IRQ_CTRL0_BASE(csi2->port);
+	u32 status;
+
+	status = readl(base + offset + IPU4P_ISYS_CSI_IRQ_STATUS_OFFSET);
+	writel(status, base + offset + IPU4P_ISYS_CSI_IRQ_CLEAR_OFFSET);
+	csi2->receiver_errors |= status & IPU4P_ISYS_CSI_ERROR_MASK;
+
+	return status;
+}
+
+void ipu4p_isys_csi2_isr(struct ipu6_isys_csi2 *csi2)
+{
+	void __iomem *base = csi2->isys->pdata->base;
+	u32 offset = IPU4P_ISYS_CSI_IRQ_CTRL_BASE(csi2->port);
+	u32 status;
+
+	status = readl(base + offset + IPU4P_ISYS_CSI_IRQ_STATUS_OFFSET);
+	writel(status, base + offset + IPU4P_ISYS_CSI_IRQ_CLEAR_OFFSET);
+	if (!(status & IPU4P_ISYS_CSI_IRQ_ACTIVE))
+		return;
+
+	status = ipu4p_isys_register_errors(csi2);
+	for (unsigned int vc = 0; vc < IPU4P_CSI2_VC_COUNT; vc++) {
+		struct ipu6_isys_stream *stream;
+
+		if (status & IPU4P_CSI2_IRQ_FS_VC(vc)) {
+			stream = ipu6_isys_query_stream_by_source(csi2->isys,
+								 csi2->asd.source, vc);
+			if (stream) {
+				ipu6_isys_csi2_sof_event_by_stream(stream);
+				ipu6_isys_put_stream(stream);
+			}
+		}
+
+		if (status & IPU4P_CSI2_IRQ_FE_VC(vc)) {
+			stream = ipu6_isys_query_stream_by_source(csi2->isys,
+								 csi2->asd.source, vc);
+			if (stream) {
+				ipu6_isys_csi2_eof_event_by_stream(stream);
+				ipu6_isys_put_stream(stream);
+			}
+		}
+	}
+}
+
 void ipu6_isys_csi2_error(struct ipu6_isys_csi2 *csi2)
 {
 	struct device *dev = &csi2->isys->adev->auxdev.dev;
 	const struct ipu6_csi2_error *errors;
 	u32 status;
 	u32 i;
+
+	if (IS_IPU4P(csi2->isys->adev->isp)) {
+		ipu4p_isys_register_errors(csi2);
+		status = csi2->receiver_errors;
+		csi2->receiver_errors = 0;
+
+		for (i = 0; i < IPU4P_ISYS_CSI_ERROR_BITS; i++) {
+			if (!(status & BIT(i)))
+				continue;
+
+			if (ipu4p_csi2_errors[i].is_info_only)
+				dev_dbg(dev, "csi2-%i info: %s\n", csi2->port,
+					ipu4p_csi2_errors[i].error_string);
+			else
+				dev_err_ratelimited(dev, "csi2-%i error: %s\n",
+						    csi2->port,
+						    ipu4p_csi2_errors[i].error_string);
+		}
+
+		return;
+	}
 
 	/* register errors once more in case of interrupts are disabled */
 	ipu6_isys_register_errors(csi2);

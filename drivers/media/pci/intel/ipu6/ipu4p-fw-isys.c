@@ -4,8 +4,10 @@
  */
 
 #include <linux/cacheflush.h>
+#include <linux/cleanup.h>
 #include <linux/delay.h>
 #include <linux/device.h>
+#include <linux/io.h>
 #include <linux/slab.h>
 
 #include "ipu6.h"
@@ -17,6 +19,7 @@
 #include "ipu6-isys-video.h"
 #include "ipu6-platform-regs.h"
 #include "ipu4p-fw-isys.h"
+#include "ipu4p-isys-csi2-regs.h"
 
 static void start_sp(struct ipu6_bus_device *adev)
 {
@@ -584,3 +587,90 @@ const struct ipu6_fw_isys_ops ipu4p_fw_isys_ops = {
 	.dump_stream_cfg = ipu4p_dump_stream_cfg,
 	.dump_frame_buf_set = ipu4p_dump_frame_buf_set,
 };
+
+void ipu4p_isys_irq_setup(struct ipu6_isys *isys)
+{
+	static const u32 irq_offsets[] = {
+		0x00, IPU4P_ISYS_IRQ_MASK_OFFSET,
+		IPU4P_ISYS_IRQ_ENABLE_OFFSET,
+		IPU4P_ISYS_IRQ_LEVEL_NOT_PULSE_OFFSET,
+	};
+	const u32 isys_irq_mask = IPU4P_ISYS_UNISPART_IRQ_SW |
+		IPU4P_ISYS_UNISPART_IRQ_CSI2(0) |
+		IPU4P_ISYS_UNISPART_IRQ_CSI2(1);
+	const struct {
+		u32 base;
+		u32 mask;
+	} irq_config[] = {
+		{ IPU4P_ISYS_UNISPART_IRQ_EDGE, isys_irq_mask },
+		{ IPU4P_ISYS_ISA_ACC_IRQ_CTRL_BASE, 0 },
+		{ IPU4P_ISYS_A_IRQ_CTRL_BASE, 0 },
+		{ IPU4P_ISYS_SIP0_IRQ_CTRL_BASE, IPU4P_ISYS_SIP0_CSI2_IRQ },
+		{ IPU4P_ISYS_SIP1_IRQ_CTRL_BASE, IPU4P_ISYS_SIP1_CSI2_IRQ_MASK },
+	};
+	void __iomem *base = isys->pdata->base;
+
+	for (unsigned int i = 0; i < ARRAY_SIZE(irq_config); i++) {
+		for (unsigned int j = 0; j < ARRAY_SIZE(irq_offsets); j++)
+			writel(irq_config[i].mask,
+			       base + irq_config[i].base + irq_offsets[j]);
+
+		writel(0xffffffff,
+		       base + irq_config[i].base + IPU4P_ISYS_IRQ_CLEAR_OFFSET);
+	}
+
+	writel(0, base + IPU4P_ISYS_UNISPART_SW_IRQ_REG);
+	writel(0, base + IPU4P_ISYS_UNISPART_SW_IRQ_MUX_REG);
+}
+
+irqreturn_t ipu4p_isys_isr(struct ipu6_bus_device *adev)
+{
+	struct ipu6_isys *isys = ipu6_bus_get_drvdata(adev);
+	void __iomem *base = isys->pdata->base;
+	u32 status, sip0_status, sip1_status;
+
+	guard(spinlock)(&isys->power_lock);
+
+	if (!isys->power)
+		return IRQ_NONE;
+
+	status = readl(base + IPU4P_ISYS_UNISPART_IRQ_STATUS);
+	sip0_status = readl(base + IPU4P_ISYS_SIP0_IRQ_CTRL_STATUS);
+	sip1_status = readl(base + IPU4P_ISYS_SIP1_IRQ_CTRL_STATUS);
+	if (!status && !sip0_status && !sip1_status)
+		return IRQ_NONE;
+
+	do {
+		writel(status, base + IPU4P_ISYS_UNISPART_IRQ_CLEAR);
+
+		writel(sip0_status, base + IPU4P_ISYS_SIP0_IRQ_CTRL_CLEAR);
+		writel(sip1_status, base + IPU4P_ISYS_SIP1_IRQ_CTRL_CLEAR);
+
+		for (unsigned int i = 0;
+		     i < isys->pdata->ipdata->csi2.nports; i++) {
+			bool port_irq = i ?
+				(sip1_status & IPU4P_ISYS_SIP1_CSI2_IRQ(i)) :
+				(sip0_status & IPU4P_ISYS_SIP0_CSI2_IRQ);
+
+			if (port_irq && isys->csi2[i].base)
+				ipu4p_isys_csi2_isr(&isys->csi2[i]);
+		}
+
+		writel(0, base + IPU4P_ISYS_UNISPART_SW_IRQ_REG);
+
+		if ((status & IPU4P_ISYS_UNISPART_IRQ_SW) &&
+		    !adev->auxdrv_data->fw_ops->isr_one(adev))
+			status = IPU4P_ISYS_UNISPART_IRQ_SW;
+		else
+			status = 0;
+
+		status |= readl(base + IPU4P_ISYS_UNISPART_IRQ_STATUS);
+		sip0_status = readl(base + IPU4P_ISYS_SIP0_IRQ_CTRL_STATUS);
+		sip1_status = readl(base + IPU4P_ISYS_SIP1_IRQ_CTRL_STATUS);
+	} while ((status & (isys->isr_csi2_bits |
+			    IPU4P_ISYS_UNISPART_IRQ_SW)) ||
+		 (sip0_status & IPU4P_ISYS_SIP0_CSI2_IRQ) ||
+		 (sip1_status & IPU4P_ISYS_SIP1_CSI2_IRQ_MASK));
+
+	return IRQ_HANDLED;
+}

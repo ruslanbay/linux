@@ -34,6 +34,7 @@
 #include "ipu6-platform-buttress-regs.h"
 #include "ipu6-platform-isys-csi2-reg.h"
 #include "ipu6-platform-regs.h"
+#include "ipu4p-isys-csi2-regs.h"
 #include "ipu7-isys-csi2-regs.h"
 
 #define IPU6_PCI_BAR		0
@@ -399,6 +400,7 @@ static void ipu6_internal_pdata_init(struct ipu6_device *isp)
 	}
 
 	if (IS_IPU4P(isp)) {
+		isys_ipdata.csi2.nports = IPU4P_ISYS_CSI2_NPORTS;
 		isys_ipdata.num_parallel_streams = IPU4P_ISYS_MAX_STREAMS;
 		isys_ipdata.max_streams = IPU4P_ISYS_MAX_STREAMS;
 		isys_ipdata.max_sram_blocks = IPU4P_NOF_SRAM_BLOCKS_MAX;

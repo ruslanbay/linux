@@ -432,5 +432,7 @@ static_assert(sizeof(struct ipu4p_fw_isys_frame_buff_set) == 120);
 static_assert(sizeof(struct ipu4p_fw_isys_resp_info) == 64);
 
 extern const struct ipu6_fw_isys_ops ipu4p_fw_isys_ops;
+irqreturn_t ipu4p_isys_isr(struct ipu6_bus_device *adev);
+void ipu4p_isys_irq_setup(struct ipu6_isys *isys);
 
 #endif /* IPU4P_FW_ISYS_H */
