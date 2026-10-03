@@ -866,6 +866,7 @@ static int isys_runtime_pm_resume(struct device *dev)
 		ipu7_isys_setup_hw(isys);
 	} else if (IS_IPU4P(isp)) {
 		ipu4p_isys_irq_setup(isys);
+		ipu4p_isys_phy_setup(isys);
 	} else {
 		ipu6_isys_setup_hw(isys);
 		set_iwake_ltrdid(isys, 0, 0, LTR_ISYS_ON);
@@ -1100,6 +1101,8 @@ static int isys_probe(struct auxiliary_device *auxdev,
 		isys->phy_set_power = ipu6_isys_jsl_phy_set_power;
 	else if (IS_IPU6EP_MTL(adev->isp))
 		isys->phy_set_power = ipu6_isys_dwc_phy_set_power;
+	else if (IS_IPU4P(adev->isp))
+		isys->phy_set_power = ipu4p_isys_phy_set_power;
 	else
 		isys->phy_set_power = ipu6_isys_mcd_phy_set_power;
 
