@@ -19,6 +19,7 @@ struct ipu6_isys_buffer_list;
 struct isys_fw_msgs;
 
 #define IPU4P_ISYS_MAX_STREAMS			8U
+#define IPU4P_ISYS_CSI2_NPORTS			8U
 #define IPU4P_MAX_IPINS				4U
 #define IPU4P_MAX_OPINS				6U
 #define IPU4P_NOF_SRAM_BLOCKS_MAX		8U

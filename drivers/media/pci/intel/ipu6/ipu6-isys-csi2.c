@@ -22,6 +22,7 @@
 #include "ipu6-bus.h"
 #include "ipu6-isys.h"
 #include "ipu6-isys-csi2.h"
+#include "ipu4p-fw-isys.h"
 #include "ipu6-isys-subdev.h"
 #include "ipu6-platform-isys-csi2-reg.h"
 #include "ipu7-isys-csi2-regs.h"
@@ -621,6 +622,10 @@ void ipu6_isys_csi2_cleanup(struct ipu6_isys_csi2 *csi2)
 	csi2->isys = NULL;
 }
 
+static const u8 ipu4p_csi2_fw_sources[IPU4P_ISYS_CSI2_NPORTS] = {
+	3, 6, 7, 8, 9, 10, 11, 12,
+};
+
 int ipu6_isys_csi2_init(struct ipu6_isys_csi2 *csi2,
 			struct ipu6_isys *isys,
 			void __iomem *base, unsigned int index)
@@ -639,7 +644,11 @@ int ipu6_isys_csi2_init(struct ipu6_isys_csi2 *csi2,
 	if (ret)
 		goto fail;
 
-	csi2->asd.source = IPU6_FW_ISYS_STREAM_SRC_CSI2_PORT0 + index;
+	if (IS_IPU4P(isys->adev->isp))
+		csi2->asd.source = IPU6_FW_ISYS_STREAM_SRC_CSI2_PORT0 +
+				      ipu4p_csi2_fw_sources[index];
+	else
+		csi2->asd.source = IPU6_FW_ISYS_STREAM_SRC_CSI2_PORT0 + index;
 	csi2->asd.supported_codes = csi2_supported_codes;
 	snprintf(csi2->asd.sd.name, sizeof(csi2->asd.sd.name),
 		 IPU6_ISYS_ENTITY_PREFIX " CSI2 %u", index);
