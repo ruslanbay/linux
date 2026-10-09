@@ -26,6 +26,7 @@ struct ipu6_bus_device;
 #define IPU6EPADLN_FIRMWARE_NAME	"intel/ipu/ipu6epadln_fw.bin"
 #define IPU7_FIRMWARE_NAME		"intel/ipu/ipu7_fw.bin"
 #define IPU7P5_FIRMWARE_NAME		"intel/ipu/ipu7ptl_fw.bin"
+#define IPU4P_FIRMWARE_NAME		"intel/ipu/ipu4p_fw.bin"
 
 #define IPU_VERSION_6		BIT(0) /* TGL */
 #define IPU_VERSION_6SE		BIT(1) /* JSL */
