@@ -169,6 +169,13 @@ struct ipu6_isys {
 	struct isys_iwake_watermark iwake_watermark;
 };
 
+enum ipu6_isys_iwake_register {
+	IPU6_ISYS_IWAKE_GDA_IRQ_CRITICAL_THRESHOLD,
+	IPU6_ISYS_IWAKE_GDA_THRESHOLD,
+	IPU6_ISYS_IWAKE_GDA_ENABLE,
+	IPU6_ISYS_IWAKE_GDA_MEMOPEN_THRESHOLD,
+};
+
 struct isys_fw_msgs {
 	union {
 		u64 dummy;
@@ -193,6 +200,9 @@ struct ipu6_fw_isys_ops {
 	int (*init)(struct ipu6_isys *isys, unsigned int num_streams);
 	int (*close)(struct ipu6_isys *isys);
 	int (*isr_one)(struct ipu6_bus_device *adev);
+	/* Optional; NULL uses the IPU6 proxy-region mapping. */
+	int (*set_iwake_register)(struct ipu6_isys *isys,
+				  enum ipu6_isys_iwake_register reg, u32 value);
 	int (*send_cmd)(struct ipu6_isys *isys,
 			const unsigned int stream_handle,
 			void *cpu_mapped_buf,
