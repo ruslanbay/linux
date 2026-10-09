@@ -158,6 +158,65 @@ static struct ipu6_mmu_hw ipu6_psys_mmu_hwdata[] = {
 	},
 };
 
+static struct ipu6_mmu_hw ipu4p_isys_mmu_hwdata[] = {
+	{
+		.offset = IPU4P_ISYS_IOMMU0_OFFSET,
+		.info_bits = IPU4P_INFO_REQUEST_DESTINATION_PRIMARY,
+		.nr_l1streams = 0,
+		.nr_l2streams = 0,
+		.insert_read_before_invalidate = true,
+	},
+	{
+		.offset = IPU4P_ISYS_IOMMU1_OFFSET,
+		.nr_l1streams = IPU4P_MMU_MAX_TLB_L1_STREAMS,
+		.l1_block_sz = {
+			5, 16, 6, 6, 6, 6, 6, 8, 0, 0, 0, 0, 0, 0, 0, 5,
+		},
+		.nr_l2streams = IPU4P_MMU_MAX_TLB_L2_STREAMS,
+		.l2_block_sz = {
+			2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+		},
+		.l1_stream_id_reg_offset = IPU4P_MMU_L1_STREAM_ID_REG_OFFSET,
+		.l2_stream_id_reg_offset = IPU4P_MMU_L2_STREAM_ID_REG_OFFSET,
+	},
+};
+
+static struct ipu6_mmu_hw ipu4p_psys_mmu_hwdata[] = {
+	{
+		.offset = IPU4P_PSYS_IOMMU0_OFFSET,
+		.info_bits = IPU4P_INFO_REQUEST_DESTINATION_PRIMARY,
+		.nr_l1streams = 0,
+		.nr_l2streams = 0,
+		.insert_read_before_invalidate = true,
+	},
+	{
+		.offset = IPU4P_PSYS_IOMMU1_OFFSET,
+		.nr_l1streams = IPU4P_MMU_MAX_TLB_L1_STREAMS,
+		.l1_block_sz = {
+			2, 5, 4, 2, 2, 10, 5, 16, 10, 5, 0, 0, 0, 0, 0, 3,
+		},
+		.nr_l2streams = IPU4P_MMU_MAX_TLB_L2_STREAMS,
+		.l2_block_sz = {
+			2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+		},
+		.l1_stream_id_reg_offset = IPU4P_MMU_L1_STREAM_ID_REG_OFFSET,
+		.l2_stream_id_reg_offset = IPU4P_MMU_L2_STREAM_ID_REG_OFFSET,
+	},
+	{
+		.offset = IPU4P_PSYS_IOMMU1R_OFFSET,
+		.nr_l1streams = IPU4P_MMU_MAX_TLB_L1_STREAMS,
+		.l1_block_sz = {
+			2, 6, 5, 16, 16, 8, 8, 0, 0, 0, 0, 0, 0, 0, 0, 3,
+		},
+		.nr_l2streams = IPU4P_MMU_MAX_TLB_L2_STREAMS,
+		.l2_block_sz = {
+			2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+		},
+		.l1_stream_id_reg_offset = IPU4P_MMU_L1_STREAM_ID_REG_OFFSET,
+		.l2_stream_id_reg_offset = IPU4P_MMU_L2_STREAM_ID_REG_OFFSET,
+	},
+};
+
 struct ipu6_mmu_hwdata {
 	struct ipu6_mmu_hw *hwdata;
 	unsigned int nr_mmus;
@@ -209,6 +268,17 @@ static void __ipu6_tlb_invalidate(struct ipu6_mmu *mmu)
 	}
 	spin_unlock_irqrestore(&mmu->ready_lock, flags);
 }
+
+static const struct ipu6_mmu_hwdata ipu4p_mmu_hwdata_lookup[IPU_SUBSYS_NUM] = {
+	[IPU_PSYS] = {
+		.hwdata = ipu4p_psys_mmu_hwdata,
+		.nr_mmus = ARRAY_SIZE(ipu4p_psys_mmu_hwdata),
+	},
+	[IPU_ISYS] = {
+		.hwdata = ipu4p_isys_mmu_hwdata,
+		.nr_mmus = ARRAY_SIZE(ipu4p_isys_mmu_hwdata),
+	},
+};
 
 static int __ipu6_mmu_hw_init(struct ipu6_mmu *mmu)
 {
@@ -289,8 +359,47 @@ static int __ipu6_mmu_init_hw_data(struct ipu6_mmu *mmu, struct device *dev,
 	return 0;
 }
 
+static int __ipu4p_mmu_init_hw_data(struct ipu6_mmu *mmu, struct device *dev,
+				    void __iomem *base)
+{
+	const struct ipu6_mmu_hwdata *lookup;
+	struct ipu6_mmu_hw *mmu_hw, *src;
+	unsigned int i, nr_mmus;
+
+	if (mmu->mmid >= IPU_SUBSYS_NUM)
+		return -EINVAL;
+
+	lookup = &ipu4p_mmu_hwdata_lookup[mmu->mmid];
+	src = lookup->hwdata;
+	nr_mmus = lookup->nr_mmus;
+
+	mmu_hw = devm_kcalloc(dev, nr_mmus, sizeof(*mmu_hw), GFP_KERNEL);
+	if (!mmu_hw)
+		return -ENOMEM;
+
+	for (i = 0; i < nr_mmus; i++) {
+		if (src[i].nr_l1streams > IPU4P_MMU_MAX_TLB_L1_STREAMS ||
+		    src[i].nr_l2streams > IPU4P_MMU_MAX_TLB_L2_STREAMS)
+			return -EINVAL;
+
+		mmu_hw[i] = src[i];
+		mmu_hw[i].base = base + src[i].offset;
+	}
+
+	mmu->nr_mmus = nr_mmus;
+	mmu->ipu6_mmu_hw = mmu_hw;
+
+	return 0;
+}
+
 const struct ipu6_mmu_hw_ops ipu6_mmu_ops = {
 	.init_hw_data = __ipu6_mmu_init_hw_data,
+	.hw_init = __ipu6_mmu_hw_init,
+	.tlb_invalidate = __ipu6_tlb_invalidate,
+};
+
+const struct ipu6_mmu_hw_ops ipu4p_mmu_ops = {
+	.init_hw_data = __ipu4p_mmu_init_hw_data,
 	.hw_init = __ipu6_mmu_hw_init,
 	.tlb_invalidate = __ipu6_tlb_invalidate,
 };
