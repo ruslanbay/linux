@@ -16,6 +16,7 @@
 #define PCI_DEVICE_ID_INTEL_IPU6EP_MTL		0x7d19
 #define PCI_DEVICE_ID_INTEL_IPU7		0x645d
 #define PCI_DEVICE_ID_INTEL_IPU7P5		0xb05d
+#define PCI_DEVICE_ID_INTEL_IPU4P		0x8a19
 
 static const struct pci_device_id ipu6_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IPU6) },
