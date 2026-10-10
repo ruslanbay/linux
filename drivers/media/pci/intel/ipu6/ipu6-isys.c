@@ -104,13 +104,41 @@ enum ltr_did_type {
 #define ISYS_PM_QOS_VALUE	300
 
 static int
+ipu6_isys_csi2_fw_port_to_index(struct ipu6_isys *isys, unsigned int fw_port)
+{
+	unsigned int index;
+
+	if (!IS_IPU4P(isys->adev->isp))
+		index = fw_port;
+	else if (fw_port == 3)
+		index = 0;
+	else if (fw_port >= 6 && fw_port <= 12)
+		index = fw_port - 5;
+	else
+		return -EINVAL;
+
+	if (index >= isys->pdata->ipdata->csi2.nports)
+		return -EINVAL;
+
+	return index;
+}
+
+static int
 isys_complete_ext_device_registration(struct ipu6_isys *isys,
 				      struct v4l2_subdev *sd,
 				      struct ipu6_isys_csi2_config *csi2)
 {
 	struct device *dev = &isys->adev->auxdev.dev;
 	unsigned int i;
+	int csi2_port;
 	int ret;
+
+	csi2_port = ipu6_isys_csi2_fw_port_to_index(isys, csi2->port);
+	if (csi2_port < 0) {
+		dev_warn(dev, "invalid csi2 port %u\n", csi2->port);
+		ret = csi2_port;
+		goto unregister_subdev;
+	}
 
 	for (i = 0; i < sd->entity.num_pads; i++) {
 		if (sd->entity.pads[i].flags & MEDIA_PAD_FL_SOURCE)
@@ -124,7 +152,7 @@ isys_complete_ext_device_registration(struct ipu6_isys *isys,
 	}
 
 	ret = media_create_pad_link(&sd->entity, i,
-				    &isys->csi2[csi2->port].asd.sd.entity,
+				    &isys->csi2[csi2_port].asd.sd.entity,
 				    0, MEDIA_LNK_FL_ENABLED |
 				       MEDIA_LNK_FL_IMMUTABLE);
 	if (ret) {
@@ -132,8 +160,8 @@ isys_complete_ext_device_registration(struct ipu6_isys *isys,
 		goto unregister_subdev;
 	}
 
-	isys->csi2[csi2->port].nlanes = csi2->nlanes;
-	isys->csi2[csi2->port].phy_mode =
+	isys->csi2[csi2_port].nlanes = csi2->nlanes;
+	isys->csi2[csi2_port].phy_mode =
 		csi2->bus_type == V4L2_MBUS_CSI2_DPHY ?
 		PHY_MODE_DPHY : PHY_MODE_CPHY;
 
@@ -361,18 +389,46 @@ static void get_lut_ltrdid(struct ipu6_isys *isys, struct ltr_did *pltr_did)
 		*pltr_did = ltrdid_default;
 }
 
-static int set_iwake_register(struct ipu6_isys *isys, u32 index, u32 value)
+static int set_iwake_register(struct ipu6_isys *isys,
+			      enum ipu6_isys_iwake_register reg, u32 value)
 {
 	struct device *dev = &isys->adev->auxdev.dev;
-	u32 req_id = index;
-	u32 offset = 0;
+	const struct ipu6_fw_isys_ops *fw_ops = isys->adev->auxdrv_data->fw_ops;
+	unsigned int proxy_region;
 	int ret;
 
-	ret = ipu6_fw_isys_send_proxy_token(isys, req_id, index, offset, value);
-	if (ret)
-		dev_err(dev, "write %d failed %d", index, ret);
+	if (fw_ops->set_iwake_register) {
+		ret = fw_ops->set_iwake_register(isys, reg, value);
+	} else if (IS_IPU7(isys->adev->isp)) {
+		ret = -EOPNOTSUPP;
+	} else {
+		switch (reg) {
+		case IPU6_ISYS_IWAKE_GDA_IRQ_CRITICAL_THRESHOLD:
+			proxy_region = GDA_IRQ_CRITICAL_THRESHOLD_INDEX;
+			break;
+		case IPU6_ISYS_IWAKE_GDA_THRESHOLD:
+			proxy_region = GDA_IWAKE_THRESHOLD_INDEX;
+			break;
+		case IPU6_ISYS_IWAKE_GDA_ENABLE:
+			proxy_region = GDA_ENABLE_IWAKE_INDEX;
+			break;
+		case IPU6_ISYS_IWAKE_GDA_MEMOPEN_THRESHOLD:
+			proxy_region = GDA_MEMOPEN_THRESHOLD_INDEX;
+			break;
+		default:
+			ret = -EINVAL;
+			goto out;
+		}
 
-	return ret;
+		ret = ipu6_fw_isys_send_proxy_token(isys, proxy_region,
+						    proxy_region, 0, value);
+	}
+
+out:
+	if (ret && ret != -EOPNOTSUPP)
+		dev_err(dev, "write %u failed %d", reg, ret);
+
+	return ret == -EOPNOTSUPP ? 0 : ret;
 }
 
 /*
@@ -398,6 +454,13 @@ static void set_iwake_ltrdid(struct ipu6_isys *isys, u16 ltr, u16 did,
 	u16 did_val, did_scale = DID_SCALE_1US;
 	struct ipu6_device *isp = isys->adev->isp;
 	union fabric_ctrl fc;
+
+	/*
+	 * IPU4P exposes its supported GDA IWAKE controls through the firmware
+	 * proxy. Do not apply IPU6 LTR/DID programming to IPU4P.
+	 */
+	if (IS_IPU4P(isp))
+		return;
 
 	switch (use) {
 	case LTR_IWAKE_ON:
@@ -466,7 +529,7 @@ static void enable_iwake(struct ipu6_isys *isys, bool enable)
 		return;
 	}
 
-	ret = set_iwake_register(isys, GDA_ENABLE_IWAKE_INDEX, enable);
+	ret = set_iwake_register(isys, IPU6_ISYS_IWAKE_GDA_ENABLE, enable);
 	if (!ret)
 		iwake_watermark->iwake_enabled = enable;
 
@@ -495,7 +558,8 @@ void update_watermark_setting(struct ipu6_isys *isys)
 	mutex_lock(&iwake_watermark->mutex);
 	if (iwake_watermark->force_iwake_disable) {
 		set_iwake_ltrdid(isys, 0, 0, LTR_IWAKE_OFF);
-		set_iwake_register(isys, GDA_IRQ_CRITICAL_THRESHOLD_INDEX,
+		set_iwake_register(isys,
+				   IPU6_ISYS_IWAKE_GDA_IRQ_CRITICAL_THRESHOLD,
 				   CRITICAL_THRESHOLD_IWAKE_DISABLE);
 		goto unlock_exit;
 	}
@@ -516,7 +580,8 @@ void update_watermark_setting(struct ipu6_isys *isys)
 		enable_iwake(isys, false);
 		set_iwake_ltrdid(isys, 0, 0, LTR_IWAKE_OFF);
 		mutex_lock(&iwake_watermark->mutex);
-		set_iwake_register(isys, GDA_IRQ_CRITICAL_THRESHOLD_INDEX,
+		set_iwake_register(isys,
+				   IPU6_ISYS_IWAKE_GDA_IRQ_CRITICAL_THRESHOLD,
 				   CRITICAL_THRESHOLD_IWAKE_DISABLE);
 		goto unlock_exit;
 	}
@@ -548,14 +613,14 @@ void update_watermark_setting(struct ipu6_isys *isys)
 
 	set_iwake_ltrdid(isys, ltr, did, ltr_did_type);
 
-	/* calculate iwake threshold with 2KB granularity pages */
+	/* Calculate the IWAKE threshold in SRAM granularity units. */
 	threshold_bytes = did * isys_pb_datarate_mbs;
 	iwake_threshold = max_t(u32, 1, threshold_bytes >> shift);
 	iwake_threshold = min_t(u32, iwake_threshold, max_sram_size);
 
 	mutex_lock(&iwake_watermark->mutex);
 	if (isys->pdata->ipdata->enhanced_iwake) {
-		set_iwake_register(isys, GDA_IWAKE_THRESHOLD_INDEX,
+		set_iwake_register(isys, IPU6_ISYS_IWAKE_GDA_THRESHOLD,
 				   DEFAULT_IWAKE_THRESHOLD);
 		/* calculate number of pages that will be filled in 10 usec */
 		page_num = (DEFAULT_MEM_OPEN_TIME * isys_pb_datarate_mbs) /
@@ -565,10 +630,11 @@ void update_watermark_setting(struct ipu6_isys *isys)
 		mem_open_threshold = isys->pdata->ipdata->memopen_threshold;
 		mem_open_threshold = max_t(u32, mem_open_threshold, page_num);
 		dev_dbg(dev, "mem_open_threshold: %u\n", mem_open_threshold);
-		set_iwake_register(isys, GDA_MEMOPEN_THRESHOLD_INDEX,
+		set_iwake_register(isys,
+				   IPU6_ISYS_IWAKE_GDA_MEMOPEN_THRESHOLD,
 				   mem_open_threshold);
 	} else {
-		set_iwake_register(isys, GDA_IWAKE_THRESHOLD_INDEX,
+		set_iwake_register(isys, IPU6_ISYS_IWAKE_GDA_THRESHOLD,
 				   iwake_threshold);
 	}
 
@@ -578,7 +644,8 @@ void update_watermark_setting(struct ipu6_isys *isys)
 	dev_dbg(dev, "threshold: %u critical: %u\n", iwake_threshold,
 		iwake_critical_threshold);
 
-	set_iwake_register(isys, GDA_IRQ_CRITICAL_THRESHOLD_INDEX,
+	set_iwake_register(isys,
+			   IPU6_ISYS_IWAKE_GDA_IRQ_CRITICAL_THRESHOLD,
 			   iwake_critical_threshold);
 
 	writel(VAL_PKGC_PMON_CFG_RESET,
@@ -624,10 +691,11 @@ static int isys_notifier_bound(struct v4l2_async_notifier *notifier,
 		container_of(asc, struct sensor_async_sd, asc);
 	int ret;
 
-	if (s_asd->csi2.port >= isys->pdata->ipdata->csi2.nports) {
+	ret = ipu6_isys_csi2_fw_port_to_index(isys, s_asd->csi2.port);
+	if (ret < 0) {
 		dev_err(&isys->adev->auxdev.dev, "invalid csi2 port %u\n",
 			s_asd->csi2.port);
-		return -EINVAL;
+		return ret;
 	}
 
 	ret = ipu_bridge_instantiate_vcm(sd->dev);
@@ -987,6 +1055,7 @@ void ipu6_put_fw_msg_buf(struct ipu6_isys *isys, struct isys_fw_msgs *msg)
 }
 
 static const struct ipu6_auxdrv_data ipu6_isys_auxdrv_data;
+static const struct ipu6_auxdrv_data ipu4p_isys_auxdrv_data;
 static const struct ipu6_auxdrv_data ipu7_isys_auxdrv_data;
 
 static int isys_probe(struct auxiliary_device *auxdev,
@@ -1006,8 +1075,12 @@ static int isys_probe(struct auxiliary_device *auxdev,
 	if (!isys)
 		return -ENOMEM;
 
-	adev->auxdrv_data = IS_IPU7(isp) ? &ipu7_isys_auxdrv_data :
-					   &ipu6_isys_auxdrv_data;
+	if (IS_IPU7(isp))
+		adev->auxdrv_data = &ipu7_isys_auxdrv_data;
+	else if (IS_IPU4P(isp))
+		adev->auxdrv_data = &ipu4p_isys_auxdrv_data;
+	else
+		adev->auxdrv_data = &ipu6_isys_auxdrv_data;
 	adev->auxdrv = to_auxiliary_drv(auxdev->dev.driver);
 	isys->adev = adev;
 	isys->pdata = adev->pdata;
@@ -1101,6 +1174,13 @@ static const struct ipu6_auxdrv_data ipu6_isys_auxdrv_data = {
 	.isr_threaded = NULL,
 	.wake_isr_thread = false,
 	.fw_ops = &ipu6_fw_isys_ops,
+};
+
+static const struct ipu6_auxdrv_data ipu4p_isys_auxdrv_data = {
+	.isr = ipu6_isys_isr,
+	.isr_threaded = NULL,
+	.wake_isr_thread = false,
+	.fw_ops = &ipu4p_fw_isys_ops,
 };
 
 static const struct ipu6_auxdrv_data ipu7_isys_auxdrv_data = {

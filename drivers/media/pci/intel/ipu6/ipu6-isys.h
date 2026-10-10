@@ -57,6 +57,11 @@ struct ipu6_bus_device;
 #define IPU6_MAX_SRAM_SIZE			(200 << 10)
 /* IS pixel buffer is 128KB, MaxSRAMSize is 96KB on IPU6SE */
 #define IPU6SE_MAX_SRAM_SIZE			(96 << 10)
+/* IPU4P has 128 physical GDA pages of 1 KiB each. */
+#define IPU4P_SRAM_GRANULARITY_SHIFT	10
+#define IPU4P_SRAM_GRANULARITY_SIZE	1024
+/* Use the 96 KiB usable size for a 128 KiB buffer, as on IPU6SE. */
+#define IPU4P_MAX_SRAM_SIZE			(96 << 10)
 
 #define IPU6EP_LTR_VALUE			200
 #define IPU6EP_MIN_MEMOPEN_TH			0x4
@@ -169,6 +174,13 @@ struct ipu6_isys {
 	struct isys_iwake_watermark iwake_watermark;
 };
 
+enum ipu6_isys_iwake_register {
+	IPU6_ISYS_IWAKE_GDA_IRQ_CRITICAL_THRESHOLD,
+	IPU6_ISYS_IWAKE_GDA_THRESHOLD,
+	IPU6_ISYS_IWAKE_GDA_ENABLE,
+	IPU6_ISYS_IWAKE_GDA_MEMOPEN_THRESHOLD,
+};
+
 struct isys_fw_msgs {
 	union {
 		u64 dummy;
@@ -193,6 +205,9 @@ struct ipu6_fw_isys_ops {
 	int (*init)(struct ipu6_isys *isys, unsigned int num_streams);
 	int (*close)(struct ipu6_isys *isys);
 	int (*isr_one)(struct ipu6_bus_device *adev);
+	/* Optional; NULL uses the IPU6 proxy-region mapping. */
+	int (*set_iwake_register)(struct ipu6_isys *isys,
+				  enum ipu6_isys_iwake_register reg, u32 value);
 	int (*send_cmd)(struct ipu6_isys *isys,
 			const unsigned int stream_handle,
 			void *cpu_mapped_buf,

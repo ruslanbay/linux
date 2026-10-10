@@ -783,13 +783,17 @@ ipu6_isys_get_stream(struct ipu6_isys_video *av, struct ipu6_isys_subdev *asd)
 	struct ipu6_isys *isys = av->isys;
 	unsigned long flags;
 	unsigned int i;
+	unsigned int max_streams;
 	u8 vc = av->vc;
 
 	if (!isys)
 		return NULL;
 
+	max_streams = min_t(unsigned int, IPU6_ISYS_MAX_STREAMS,
+			    isys->pdata->ipdata->max_streams);
+
 	spin_lock_irqsave(&isys->streams_lock, flags);
-	for (i = 0; i < IPU6_ISYS_MAX_STREAMS; i++) {
+	for (i = 0; i < max_streams; i++) {
 		if (isys->streams_ref_count[i] && isys->streams[i].vc == vc &&
 		    isys->streams[i].asd == asd) {
 			isys->streams_ref_count[i]++;
@@ -799,7 +803,7 @@ ipu6_isys_get_stream(struct ipu6_isys_video *av, struct ipu6_isys_subdev *asd)
 	}
 
 	if (!stream) {
-		for (i = 0; i < IPU6_ISYS_MAX_STREAMS; i++) {
+		for (i = 0; i < max_streams; i++) {
 			if (!isys->streams_ref_count[i]) {
 				isys->streams_ref_count[i]++;
 				stream = &isys->streams[i];
