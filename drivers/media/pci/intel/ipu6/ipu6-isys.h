@@ -19,6 +19,7 @@
 #include "ipu6.h"
 #include "ipu6-fw-isys.h"
 #include "ipu7-fw-isys.h"
+#include "ipu4p-fw-isys.h"
 #include "ipu6-isys-csi2.h"
 #include "ipu6-isys-video.h"
 
@@ -179,6 +180,10 @@ struct isys_fw_msgs {
 			struct ipu7_fw_isys_frame_buff_set frame;
 			struct ipu7_fw_isys_stream_cfg stream;
 		} ipu7;
+		union {
+			struct ipu4p_fw_isys_frame_buff_set frame;
+			struct ipu4p_fw_isys_stream_cfg stream;
+		} ipu4p;
 	};
 	struct list_head head;
 	dma_addr_t dma_addr;
