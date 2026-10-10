@@ -399,6 +399,7 @@ static void ipu6_internal_pdata_init(struct ipu6_device *isp)
 	}
 
 	if (IS_IPU4P(isp)) {
+		isys_ipdata.csi2.nports = IPU4P_ISYS_CSI2_NPORTS;
 		isys_ipdata.num_parallel_streams = IPU4P_ISYS_MAX_STREAMS;
 		isys_ipdata.max_streams = IPU4P_ISYS_MAX_STREAMS;
 		isys_ipdata.sram_gran_shift = IPU4P_SRAM_GRANULARITY_SHIFT;
