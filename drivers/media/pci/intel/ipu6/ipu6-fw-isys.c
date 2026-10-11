@@ -4,9 +4,11 @@
  */
 
 #include <linux/cacheflush.h>
+#include <linux/compiler.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/io.h>
+#include <linux/jiffies.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
 
@@ -562,6 +564,15 @@ void ipu6_isys_handle_response(struct ipu6_bus_device *adev,
 		goto leave;
 	}
 	stream->error = resp->error_info.error;
+	if (IS_IPU4P(adev->isp)) {
+		WRITE_ONCE(stream->last_response_type, resp->type);
+		WRITE_ONCE(stream->last_response_error, resp->error_info.error);
+		WRITE_ONCE(stream->last_response_details,
+			   resp->error_info.error_details);
+		WRITE_ONCE(stream->last_response_jiffies, jiffies);
+		WRITE_ONCE(stream->response_count,
+			   READ_ONCE(stream->response_count) + 1);
+	}
 
 	if (stream->asd)
 		csi2 = ipu6_isys_subdev_to_csi2(stream->asd);
@@ -571,6 +582,7 @@ void ipu6_isys_handle_response(struct ipu6_bus_device *adev,
 		complete(&stream->stream_open_completion);
 		break;
 	case IPU6_FW_ISYS_RESP_TYPE_STREAM_CLOSE_ACK:
+		stream->stream_close_error = resp->error_info.error;
 		complete(&stream->stream_close_completion);
 		break;
 	case IPU6_FW_ISYS_RESP_TYPE_STREAM_START_ACK:
@@ -580,9 +592,11 @@ void ipu6_isys_handle_response(struct ipu6_bus_device *adev,
 		complete(&stream->stream_start_completion);
 		break;
 	case IPU6_FW_ISYS_RESP_TYPE_STREAM_STOP_ACK:
+		stream->stream_stop_error = resp->error_info.error;
 		complete(&stream->stream_stop_completion);
 		break;
 	case IPU6_FW_ISYS_RESP_TYPE_STREAM_FLUSH_ACK:
+		stream->stream_stop_error = resp->error_info.error;
 		complete(&stream->stream_stop_completion);
 		break;
 	case IPU6_FW_ISYS_RESP_TYPE_PIN_DATA_READY:

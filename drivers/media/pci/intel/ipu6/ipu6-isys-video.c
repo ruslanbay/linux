@@ -6,9 +6,11 @@
 #include <linux/align.h>
 #include <linux/bits.h>
 #include <linux/bug.h>
+#include <linux/compiler.h>
 #include <linux/completion.h>
 #include <linux/container_of.h>
 #include <linux/device.h>
+#include <linux/jiffies.h>
 #include <linux/list.h>
 #include <linux/math64.h>
 #include <linux/minmax.h>
@@ -29,6 +31,8 @@
 #include "ipu6.h"
 #include "ipu6-bus.h"
 #include "ipu6-cpd.h"
+#include "ipu4p-fw-isys.h"
+#include "ipu6-fw-com.h"
 #include "ipu6-fw-isys.h"
 #include "ipu6-isys.h"
 #include "ipu6-isys-csi2.h"
@@ -450,6 +454,23 @@ static void put_stream_opened(struct ipu6_isys_video *av)
 	spin_unlock_irqrestore(&av->isys->streams_lock, flags);
 }
 
+static void mark_isys_reset_needed(struct ipu6_isys *isys, const char *reason)
+{
+	bool already_needed;
+
+	mutex_lock(&isys->mutex);
+	already_needed = isys->need_reset;
+	isys->need_reset = true;
+	mutex_unlock(&isys->mutex);
+
+	dev_dbg(&isys->adev->auxdev.dev,
+		"ISYS reset requested: reason=%s already_needed=%d "
+		"opened=%u refs=%u power=%d fwctx=%d\n",
+		reason, already_needed, READ_ONCE(isys->stream_opened),
+		READ_ONCE(isys->ref_count), READ_ONCE(isys->power),
+		!!READ_ONCE(isys->fwctx));
+}
+
 static int start_stream_firmware(struct ipu6_isys_video *av,
 				 struct ipu6_isys_buffer_list *bl)
 {
@@ -538,22 +559,34 @@ static int start_stream_firmware(struct ipu6_isys_video *av,
 	return 0;
 
 out_stream_close:
+	stream->stream_close_error = 0;
 	reinit_completion(&stream->stream_close_completion);
 
 	retout = fw_ops->stream_close(av->isys, stream->stream_handle);
 	if (retout < 0) {
-		dev_dbg(dev, "can't close stream (%d)\n", retout);
+		dev_err(dev, "can't close stream (%d)\n", retout);
+		if (IS_IPU4P(adev->isp))
+			mark_isys_reset_needed(av->isys,
+					       "start-cleanup-close-submit-failed");
 		goto out_put_stream_opened;
 	}
 
 	tout = wait_for_completion_timeout(&stream->stream_close_completion,
 					   IPU6_FW_CALL_TIMEOUT_JIFFIES);
-	if (!tout)
+	if (!tout) {
 		dev_err(dev, "stream close time out\n");
-	else if (stream->error)
-		dev_err(dev, "stream close error: %d\n", stream->error);
-	else
+		if (IS_IPU4P(adev->isp))
+			mark_isys_reset_needed(av->isys,
+					       "start-cleanup-close-timeout");
+	} else if (stream->stream_close_error) {
+		dev_err(dev, "stream close error: %d\n",
+			stream->stream_close_error);
+		if (IS_IPU4P(adev->isp))
+			mark_isys_reset_needed(av->isys,
+					       "start-cleanup-close-ack-error");
+	} else {
 		dev_dbg(dev, "stream close complete\n");
+	}
 
 out_put_stream_opened:
 	put_stream_opened(av);
@@ -561,33 +594,106 @@ out_put_stream_opened:
 	return ret;
 }
 
-static void stop_streaming_firmware(struct ipu6_isys_video *av)
+static int stop_streaming_firmware(struct ipu6_isys_video *av)
 {
 	struct ipu6_bus_device *adev = av->isys->adev;
 	const struct ipu6_fw_isys_ops *fw_ops = adev->auxdrv_data->fw_ops;
 	struct device *dev = &adev->auxdev.dev;
 	struct ipu6_isys_stream *stream = av->stream;
+	unsigned long last_response_jiffies;
+	u32 response_count_before, response_count;
+	u32 last_response_type, last_response_error, last_response_details;
+	u32 last_response_age_ms;
 	int ret, tout;
 
+	response_count_before = IS_IPU4P(adev->isp) ?
+		READ_ONCE(stream->response_count) : 0;
+	stream->stream_stop_error = 0;
+	dev_dbg(dev, "stream flush request: source=%d vc=%u handle=%d\n",
+		stream->stream_source, stream->vc, stream->stream_handle);
 	reinit_completion(&stream->stream_stop_completion);
 
 	ret = fw_ops->stream_flush(av->isys, stream->stream_handle);
 	if (ret < 0) {
-		dev_err(dev, "can't stop stream (%d)\n", ret);
-		return;
+		dev_err(dev,
+			"stream flush submission failed: source=%d vc=%u handle=%d error=%d\n",
+			stream->stream_source, stream->vc, stream->stream_handle, ret);
+		return ret;
 	}
+	dev_dbg(dev, "stream flush queued: source=%d vc=%u handle=%d\n",
+		stream->stream_source, stream->vc, stream->stream_handle);
 
 	tout = wait_for_completion_timeout(&stream->stream_stop_completion,
 					   IPU6_FW_CALL_TIMEOUT_JIFFIES);
-	if (!tout)
-		dev_warn(dev, "stream stop time out\n");
-	else if (stream->error)
-		dev_warn(dev, "stream stop error: %d\n", stream->error);
-	else
-		dev_dbg(dev, "stop stream: complete\n");
+	if (!tout) {
+		if (IS_IPU4P(adev->isp)) {
+			response_count = READ_ONCE(stream->response_count);
+			last_response_type = READ_ONCE(stream->last_response_type);
+			last_response_error = READ_ONCE(stream->last_response_error);
+			last_response_details =
+				READ_ONCE(stream->last_response_details);
+			last_response_jiffies =
+				READ_ONCE(stream->last_response_jiffies);
+			last_response_age_ms = last_response_jiffies ?
+				jiffies_to_msecs(jiffies -
+						 last_response_jiffies) : ~0U;
+
+			dev_warn(dev,
+				 "stream stop timeout: flush source=%d vc=%u handle=%d "
+				 "last_response_error=%d ack_error=%d "
+				 "responses=%u(+%u) last_response=%u/%u/%u age_ms=%u "
+				 "receiver_errors=0x%x open=%u refs=%u need_reset=%d "
+				 "power=%d fwctx=%d\n",
+				 stream->stream_source, stream->vc, stream->stream_handle,
+				 stream->error, stream->stream_stop_error,
+				 response_count, response_count - response_count_before,
+				 last_response_type, last_response_error,
+				 last_response_details, last_response_age_ms,
+				 av->csi2 ? READ_ONCE(av->csi2->receiver_errors) : 0,
+				 READ_ONCE(av->isys->stream_opened),
+				 READ_ONCE(av->isys->ref_count),
+				 READ_ONCE(av->isys->need_reset),
+				 READ_ONCE(av->isys->power),
+				 !!READ_ONCE(av->isys->fwctx));
+
+			if (av->isys->fwctx) {
+				struct ipu6_fw_com_context *ctx = av->isys->fwctx;
+
+				ipu6_fw_com_dump_queue_state(ctx, true,
+							     stream->stream_handle +
+						     IPU4P_BASE_MSG_SEND_QUEUES,
+							     "flush-timeout", true);
+				ipu6_fw_com_dump_queue_state(ctx, false,
+							     IPU4P_BASE_MSG_RECV_QUEUES,
+							     "flush-timeout", true);
+			}
+			ipu4p_isys_dump_irq_state(av->isys, av->csi2);
+		} else {
+			dev_warn(dev,
+				 "stream stop time out: flush source=%d vc=%u handle=%d "
+				 "last_response_error=%d ack_error=%d receiver_errors=0x%x "
+				 "open=%u\n",
+				 stream->stream_source, stream->vc, stream->stream_handle,
+				 stream->error, stream->stream_stop_error,
+				 av->csi2 ? av->csi2->receiver_errors : 0,
+				 av->isys->stream_opened);
+		}
+		return -ETIMEDOUT;
+	}
+	if (stream->stream_stop_error) {
+		dev_warn(dev,
+			 "stream stop error: source=%d vc=%u handle=%d error=%d\n",
+			 stream->stream_source, stream->vc, stream->stream_handle,
+			 stream->stream_stop_error);
+		return -EIO;
+	}
+
+	dev_dbg(dev, "stop stream: complete source=%d vc=%u handle=%d\n",
+		stream->stream_source, stream->vc, stream->stream_handle);
+	return 0;
 }
 
-static void close_streaming_firmware(struct ipu6_isys_video *av)
+static int close_streaming_firmware(struct ipu6_isys_video *av)
 {
 	struct ipu6_bus_device *adev = av->isys->adev;
 	const struct ipu6_fw_isys_ops *fw_ops = adev->auxdrv_data->fw_ops;
@@ -595,26 +701,48 @@ static void close_streaming_firmware(struct ipu6_isys_video *av)
 	struct device *dev = &adev->auxdev.dev;
 	int ret, tout;
 
+	stream->stream_close_error = 0;
+	dev_dbg(dev, "stream close request: source=%d vc=%u handle=%d\n",
+		stream->stream_source, stream->vc, stream->stream_handle);
 	reinit_completion(&stream->stream_close_completion);
 
 	ret = fw_ops->stream_close(av->isys, stream->stream_handle);
 	if (ret < 0) {
-		dev_err(dev, "can't close stream (%d)\n", ret);
-		return;
+		dev_err(dev,
+			"stream close submission failed: source=%d vc=%u handle=%d error=%d\n",
+			stream->stream_source, stream->vc, stream->stream_handle, ret);
+		goto out_put_stream_opened;
 	}
+	dev_dbg(dev, "stream close queued: source=%d vc=%u handle=%d\n",
+		stream->stream_source, stream->vc, stream->stream_handle);
 
 	tout = wait_for_completion_timeout(&stream->stream_close_completion,
 					   IPU6_FW_CALL_TIMEOUT_JIFFIES);
-	if (!tout)
-		dev_warn(dev, "stream close time out\n");
-	else if (stream->error)
-		dev_warn(dev, "stream close error: %d\n", stream->error);
-	else
-		dev_dbg(dev, "close stream: complete\n");
+	if (!tout) {
+		dev_warn(dev,
+			 "stream close time out: source=%d vc=%u handle=%d last_response_error=%d ack_error=%d receiver_errors=0x%x open=%u\n",
+			 stream->stream_source, stream->vc, stream->stream_handle,
+			 stream->error, stream->stream_close_error,
+			 av->csi2 ? av->csi2->receiver_errors : 0,
+			 av->isys->stream_opened);
+		ret = -ETIMEDOUT;
+	} else if (stream->stream_close_error) {
+		dev_warn(dev,
+			 "stream close error: source=%d vc=%u handle=%d error=%d\n",
+			 stream->stream_source, stream->vc, stream->stream_handle,
+			 stream->stream_close_error);
+		ret = -EIO;
+	} else {
+		dev_dbg(dev, "close stream: complete source=%d vc=%u handle=%d\n",
+			stream->stream_source, stream->vc, stream->stream_handle);
+		ret = 0;
+	}
 
+out_put_stream_opened:
+	/* Drop the software open count even if the command was not accepted. */
 	put_stream_opened(av);
+	return ret;
 }
-
 int ipu6_isys_video_prepare_stream(struct ipu6_isys_video *av,
 				   struct media_entity *source_entity,
 				   int nr_queues)
@@ -898,6 +1026,7 @@ int ipu6_isys_video_set_streaming(struct ipu6_isys_video *av, int state,
 {
 	struct v4l2_subdev_krouting *routing;
 	struct ipu6_isys_stream *stream = av->stream;
+	struct ipu6_bus_device *adev = av->isys->adev;
 	struct v4l2_subdev_state *subdev_state;
 	struct device *dev = &av->isys->adev->auxdev.dev;
 	struct v4l2_subdev *sd;
@@ -906,6 +1035,7 @@ int ipu6_isys_video_set_streaming(struct ipu6_isys_video *av, int state,
 	u64 r_stream;
 	u64 stream_mask = 0;
 	int ret = 0;
+	int stop_ret, sensor_ret, close_ret, cleanup_ret;
 
 	dev_dbg(dev, "set stream: %d\n", state);
 
@@ -924,18 +1054,50 @@ int ipu6_isys_video_set_streaming(struct ipu6_isys_video *av, int state,
 
 	stream_mask = get_stream_mask_by_pipeline(av);
 	if (!state) {
-		stop_streaming_firmware(av);
+		stop_ret = stop_streaming_firmware(av);
+		cleanup_ret = stop_ret;
 
-		/* stop sub-device which connects with video */
+		/* Stop the sensor even if the firmware flush fails. */
 		dev_dbg(dev, "stream off entity %s pad:%d mask:0x%llx\n",
 			sd->name, r_pad->index, stream_mask);
-		ret = v4l2_subdev_disable_streams(sd, r_pad->index,
-						  stream_mask);
-		if (ret)
+		sensor_ret = v4l2_subdev_disable_streams(sd, r_pad->index,
+							 stream_mask);
+		dev_dbg(dev,
+			"sensor disable_streams: entity=%s pad=%d mask=0x%llx ret=%d\n",
+			sd->name, r_pad->index, stream_mask, sensor_ret);
+		if (sensor_ret && sensor_ret != -ENOIOCTLCMD) {
 			dev_err(dev, "stream off %s failed with %d\n", sd->name,
-				ret);
+				sensor_ret);
+			if (!cleanup_ret)
+				cleanup_ret = sensor_ret;
+			if (IS_IPU4P(adev->isp))
+				mark_isys_reset_needed(av->isys,
+						       "sensor-disable-failed");
+		}
 
-		close_streaming_firmware(av);
+		/*
+		 * IPU4P must not receive STREAM_CLOSE after a failed flush: the
+		 * firmware stream state is then unknown. Leave recovery to the
+		 * ISYS context/power-cycle path, but release our software count.
+		 */
+		if (stop_ret && IS_IPU4P(adev->isp)) {
+			dev_warn(dev,
+				 "skipping stream close after failed IPU4P flush: source=%d vc=%u handle=%d error=%d\n",
+				 stream->stream_source, stream->vc, stream->stream_handle,
+				 stop_ret);
+			mark_isys_reset_needed(av->isys, "flush-failed");
+			put_stream_opened(av);
+		} else {
+			close_ret = close_streaming_firmware(av);
+			if (close_ret) {
+				if (IS_IPU4P(adev->isp))
+					mark_isys_reset_needed(av->isys,
+							       "close-failed");
+				if (!cleanup_ret)
+					cleanup_ret = close_ret;
+			}
+		}
+		ret = cleanup_ret;
 	} else {
 		ret = start_stream_firmware(av, bl);
 		if (ret) {
@@ -956,11 +1118,19 @@ int ipu6_isys_video_set_streaming(struct ipu6_isys_video *av, int state,
 
 	av->streaming = state;
 
-	return 0;
+	return state ? 0 : ret;
 
 out_media_entity_stop_streaming_firmware:
-	stop_streaming_firmware(av);
-	close_streaming_firmware(av);
+	stop_ret = stop_streaming_firmware(av);
+	if (stop_ret && IS_IPU4P(adev->isp)) {
+		mark_isys_reset_needed(av->isys, "start-cleanup-flush-failed");
+		put_stream_opened(av);
+	} else {
+		close_ret = close_streaming_firmware(av);
+		if (close_ret && IS_IPU4P(adev->isp))
+			mark_isys_reset_needed(av->isys,
+					       "start-cleanup-close-failed");
+	}
 
 	return ret;
 }
@@ -1012,6 +1182,17 @@ int ipu6_isys_fw_open(struct ipu6_isys *isys)
 		return ret;
 
 	mutex_lock(&isys->mutex);
+
+	if (isys->need_reset) {
+		mutex_unlock(&isys->mutex);
+		ret = pm_runtime_put_sync_suspend(&adev->auxdev.dev);
+		dev_warn(&adev->auxdev.dev,
+			 "ISYS recovery pending: stream start deferred, "
+			 "suspend attempt=%d, ISYS suspended=%d, ISP suspended=%d\n",
+			 ret, pm_runtime_suspended(&adev->auxdev.dev),
+			 pm_runtime_suspended(&adev->isp->pdev->dev));
+		return -EIO;
+	}
 
 	if (isys->ref_count++)
 		goto unlock;

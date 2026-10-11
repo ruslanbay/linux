@@ -64,6 +64,15 @@ struct ipu6_isys_stream {
 
 	struct ipu6_isys_queue *output_pins_queue[IPU6_ISYS_OUTPUT_PINS];
 	int error;
+	/* Errors reported by stream stop/flush and close acknowledgements. */
+	int stream_stop_error;
+	int stream_close_error;
+	/* Latest firmware response metadata, read when lifecycle waits time out. */
+	u32 response_count;
+	u32 last_response_type;
+	u32 last_response_error;
+	u32 last_response_details;
+	unsigned long last_response_jiffies;
 	u8 vc;
 };
 

@@ -44,5 +44,8 @@ void *ipu6_recv_get_token(struct ipu6_fw_com_context *ctx, int q_nbr);
 void ipu6_recv_put_token(struct ipu6_fw_com_context *ctx, int q_nbr);
 void *ipu6_send_get_token(struct ipu6_fw_com_context *ctx, int q_nbr);
 void ipu6_send_put_token(struct ipu6_fw_com_context *ctx, int q_nbr);
+void ipu6_fw_com_dump_queue_state(struct ipu6_fw_com_context *ctx,
+				  bool input, unsigned int q_nbr,
+				  const char *reason, bool warn);
 
 #endif

@@ -6,6 +6,7 @@
 #include <linux/auxiliary_bus.h>
 #include <linux/bitfield.h>
 #include <linux/bits.h>
+#include <linux/compiler.h>
 #include <linux/completion.h>
 #include <linux/container_of.h>
 #include <linux/delay.h>
@@ -908,6 +909,14 @@ static int isys_runtime_pm_resume(struct device *dev)
 		set_iwake_ltrdid(isys, 0, 0, LTR_ISYS_ON);
 	}
 
+	if (IS_IPU4P(isp))
+		dev_dbg(&adev->auxdev.dev,
+			"IPU4P runtime resume: power=%d need_reset=%d refs=%u "
+			"opened=%u fwctx=%d\n",
+			READ_ONCE(isys->power), READ_ONCE(isys->need_reset),
+			READ_ONCE(isys->ref_count), READ_ONCE(isys->stream_opened),
+			!!READ_ONCE(isys->fwctx));
+
 	return 0;
 }
 
@@ -917,14 +926,23 @@ static int isys_runtime_pm_suspend(struct device *dev)
 	struct ipu6_isys *isys = dev_get_drvdata(dev);
 	struct ipu6_device *isp = adev->isp;
 	unsigned long flags;
+	bool need_reset;
 
 	spin_lock_irqsave(&isys->power_lock, flags);
 	isys->power = 0;
 	spin_unlock_irqrestore(&isys->power_lock, flags);
 
 	mutex_lock(&isys->mutex);
+	need_reset = isys->need_reset;
 	isys->need_reset = false;
 	mutex_unlock(&isys->mutex);
+
+	if (IS_IPU4P(isp))
+		dev_dbg(&adev->auxdev.dev,
+			"IPU4P runtime suspend: need_reset=%d->0 refs=%u "
+			"opened=%u fwctx=%d\n",
+			need_reset, READ_ONCE(isys->ref_count),
+			READ_ONCE(isys->stream_opened), !!READ_ONCE(isys->fwctx));
 
 	isys->phy_termcal_val = 0;
 	cpu_latency_qos_update_request(&isys->pm_qos, PM_QOS_DEFAULT_VALUE);

@@ -12,6 +12,7 @@
 struct ipu6_bus_device;
 struct ipu6_fw_isys_ops;
 struct ipu6_isys;
+struct ipu6_isys_csi2;
 struct ipu6_isys_video;
 struct ipu6_isys_stream;
 struct ipu6_isys_buffer_list;
@@ -407,5 +408,7 @@ static_assert(sizeof(struct ipu4p_fw_isys_resp_info) == 64);
 extern const struct ipu6_fw_isys_ops ipu4p_fw_isys_ops;
 irqreturn_t ipu4p_isys_isr(struct ipu6_bus_device *adev);
 void ipu4p_isys_irq_setup(struct ipu6_isys *isys);
+void ipu4p_isys_dump_irq_state(struct ipu6_isys *isys,
+			       struct ipu6_isys_csi2 *csi2);
 
 #endif /* IPU4P_FW_ISYS_H */

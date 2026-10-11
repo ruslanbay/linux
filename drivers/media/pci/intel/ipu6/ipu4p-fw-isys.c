@@ -5,6 +5,7 @@
 
 #include <linux/cacheflush.h>
 #include <linux/cleanup.h>
+#include <linux/compiler.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/io.h>
@@ -162,6 +163,8 @@ static int ipu4p_fw_isys_close(struct ipu6_isys *isys)
 	spin_unlock_irqrestore(&isys->power_lock, flags);
 	if (ret)
 		dev_err(dev, "Device close failure: %d\n", ret);
+	else
+		dev_dbg(dev, "IPU4P fwctx close request accepted\n");
 
 	do {
 		usleep_range(400, 500);
@@ -174,6 +177,8 @@ static int ipu4p_fw_isys_close(struct ipu6_isys *isys)
 		spin_lock_irqsave(&isys->power_lock, flags);
 		isys->fwctx = fwctx;
 		spin_unlock_irqrestore(&isys->power_lock, flags);
+	} else {
+		dev_dbg(dev, "IPU4P fwctx release complete\n");
 	}
 
 	return ret;
@@ -242,8 +247,10 @@ static int ipu4p_send_cmd(struct ipu6_isys *isys,
 			  dma_addr_t dma_mapped_buf,
 			  size_t size, u16 send_type)
 {
+	struct device *dev = &isys->adev->auxdev.dev;
 	struct ipu6_fw_com_context *ctx = isys->fwctx;
 	struct ipu4p_fw_isys_send_token *token;
+	bool lifecycle_cmd = send_type >= IPU4P_FW_ISYS_SEND_TYPE_STREAM_STOP;
 
 	if (send_type >= N_IPU4P_FW_ISYS_SEND_TYPE)
 		return -EINVAL;
@@ -251,10 +258,26 @@ static int ipu4p_send_cmd(struct ipu6_isys *isys,
 	if (cpu_mapped_buf)
 		clflush_cache_range(cpu_mapped_buf, size);
 
+	if (lifecycle_cmd)
+		ipu6_fw_com_dump_queue_state(ctx, true,
+					     stream_handle +
+					     IPU4P_BASE_MSG_SEND_QUEUES,
+					     "before-send", false);
+
 	token = ipu6_send_get_token(ctx, stream_handle +
 				    IPU4P_BASE_MSG_SEND_QUEUES);
-	if (!token)
+	if (!token) {
+		if (lifecycle_cmd) {
+			ipu6_fw_com_dump_queue_state(ctx, true,
+						     stream_handle +
+						     IPU4P_BASE_MSG_SEND_QUEUES,
+						     "send-busy", true);
+			dev_warn(dev,
+				 "IPU4P command queue busy: type=%u stream=%u\n",
+				 (unsigned int)send_type, stream_handle);
+		}
 		return -EBUSY;
+	}
 
 	token->buf_handle = (unsigned long)cpu_mapped_buf;
 	token->payload = dma_mapped_buf;
@@ -262,6 +285,15 @@ static int ipu4p_send_cmd(struct ipu6_isys *isys,
 	token->stream_id = stream_handle;
 
 	ipu6_send_put_token(ctx, stream_handle + IPU4P_BASE_MSG_SEND_QUEUES);
+
+	if (lifecycle_cmd) {
+		ipu6_fw_com_dump_queue_state(ctx, true,
+					     stream_handle +
+					     IPU4P_BASE_MSG_SEND_QUEUES,
+					     "after-send", false);
+		dev_dbg(dev, "IPU4P command queued: type=%u stream=%u\n",
+			(unsigned int)send_type, stream_handle);
+	}
 
 	return 0;
 }
@@ -340,6 +372,17 @@ static int ipu4p_isys_isr_one(struct ipu6_bus_device *adev)
 				      IPU4P_BASE_MSG_RECV_QUEUES);
 	if (!fw_resp)
 		return 1;
+
+	if (fw_resp->error_info.error ||
+	    fw_resp->type == IPU4P_FW_ISYS_RESP_TYPE_STREAM_STOP_ACK ||
+	    fw_resp->type == IPU4P_FW_ISYS_RESP_TYPE_STREAM_FLUSH_ACK ||
+	    fw_resp->type == IPU4P_FW_ISYS_RESP_TYPE_STREAM_CLOSE_ACK)
+		dev_dbg(&adev->auxdev.dev,
+			"IPU4P raw response: type=%u stream=%u error=%u details=%u\n",
+			(unsigned int)fw_resp->type,
+			(unsigned int)fw_resp->stream_handle,
+			fw_resp->error_info.error,
+			fw_resp->error_info.error_details);
 
 	resp.buf_id = fw_resp->buf_id;
 	resp.pin.out_buf_id = fw_resp->pin.out_buf_id;
@@ -633,6 +676,45 @@ void ipu4p_isys_irq_setup(struct ipu6_isys *isys)
 
 	writel(0, base + IPU4P_ISYS_UNISPART_SW_IRQ_REG);
 	writel(0, base + IPU4P_ISYS_UNISPART_SW_IRQ_MUX_REG);
+}
+
+/*
+ * Read the pending IRQ status without acknowledging or clearing it. This is
+ * called only after a lifecycle timeout, to preserve evidence for diagnosis.
+ */
+void ipu4p_isys_dump_irq_state(struct ipu6_isys *isys,
+			       struct ipu6_isys_csi2 *csi2)
+{
+	struct device *dev = &isys->adev->auxdev.dev;
+	void __iomem *base = isys->pdata->base;
+	u32 unispart, sip0, sip1;
+	u32 csi_ctrl = 0, csi_error = 0, receiver_errors = 0;
+
+	if (!READ_ONCE(isys->power)) {
+		dev_warn(dev, "IPU4P IRQ snapshot skipped: ISYS power=0\n");
+		return;
+	}
+
+	unispart = readl(base + IPU4P_ISYS_UNISPART_IRQ_STATUS);
+	sip0 = readl(base + IPU4P_ISYS_SIP0_IRQ_CTRL_STATUS);
+	sip1 = readl(base + IPU4P_ISYS_SIP1_IRQ_CTRL_STATUS);
+
+	if (csi2 && csi2->base) {
+		csi_ctrl = readl(base +
+				 IPU4P_ISYS_CSI_IRQ_CTRL_BASE(csi2->port) +
+				 IPU4P_ISYS_CSI_IRQ_STATUS_OFFSET);
+		csi_error = readl(base +
+				  IPU4P_ISYS_CSI_IRQ_CTRL0_BASE(csi2->port) +
+				  IPU4P_ISYS_CSI_IRQ_STATUS_OFFSET);
+		receiver_errors = READ_ONCE(csi2->receiver_errors);
+	}
+
+	dev_warn(dev,
+		 "IPU4P IRQ snapshot: port=%d unispart=0x%08x sip0=0x%08x "
+		 "sip1=0x%08x csi_ctrl=0x%08x csi_error_status=0x%08x "
+		 "receiver_errors=0x%08x\n",
+		 csi2 ? (int)csi2->port : -1, unispart, sip0, sip1, csi_ctrl,
+		 csi_error, receiver_errors);
 }
 
 irqreturn_t ipu4p_isys_isr(struct ipu6_bus_device *adev)

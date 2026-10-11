@@ -377,6 +377,64 @@ bool ipu6_fw_com_ready(struct ipu6_fw_com_context *ctx)
 }
 EXPORT_SYMBOL_NS_GPL(ipu6_fw_com_ready, "INTEL_IPU6");
 
+/*
+ * Snapshot queue pointers without consuming tokens or acknowledging firmware
+ * status. Used only around lifecycle commands and on lifecycle timeouts.
+ */
+void ipu6_fw_com_dump_queue_state(struct ipu6_fw_com_context *ctx,
+				  bool input, unsigned int q_nbr,
+				  const char *reason, bool warn)
+{
+	struct device *dev;
+	struct ipu6_fw_sys_queue *q;
+	void __iomem *q_dmem;
+	unsigned int wr, rd, used, free;
+	bool ready;
+
+	if (!ctx)
+		return;
+
+	dev = &ctx->adev->auxdev.dev;
+	q = input ? &ctx->input_queue[q_nbr] : &ctx->output_queue[q_nbr];
+	q_dmem = ctx->dmem_addr + q->wr_reg * 4;
+	wr = readl(q_dmem + FW_COM_WR_REG);
+	rd = readl(q_dmem + FW_COM_RD_REG);
+
+	if (!q->size || wr >= q->size || rd >= q->size) {
+		if (warn)
+			dev_warn(dev,
+				 "FWCOM queue snapshot %s: dir=%s q=%u wr=%u rd=%u "
+				 "size=%u (invalid)\n",
+				 reason, input ? "send" : "recv", q_nbr,
+				 wr, rd, q->size);
+		else
+			dev_dbg(dev,
+				"FWCOM queue snapshot %s: dir=%s q=%u wr=%u rd=%u "
+				"size=%u (invalid)\n",
+				reason, input ? "send" : "recv", q_nbr,
+				wr, rd, q->size);
+		return;
+	}
+
+	used = wr >= rd ? wr - rd : q->size - rd + wr;
+	free = q->size - used - 1;
+	ready = ipu6_fw_com_ready(ctx);
+
+	if (warn)
+		dev_warn(dev,
+			 "FWCOM queue snapshot %s: dir=%s q=%u wr=%u rd=%u "
+			 "used=%u free=%u size=%u token=%u ready=%d\n",
+			 reason, input ? "send" : "recv", q_nbr, wr, rd,
+			 used, free, q->size, q->token_size, ready);
+	else
+		dev_dbg(dev,
+			"FWCOM queue snapshot %s: dir=%s q=%u wr=%u rd=%u "
+			"used=%u free=%u size=%u token=%u ready=%d\n",
+			reason, input ? "send" : "recv", q_nbr, wr, rd,
+			used, free, q->size, q->token_size, ready);
+}
+EXPORT_SYMBOL_NS_GPL(ipu6_fw_com_dump_queue_state, "INTEL_IPU6");
+
 void *ipu6_send_get_token(struct ipu6_fw_com_context *ctx, int q_nbr)
 {
 	struct ipu6_fw_sys_queue *q = &ctx->input_queue[q_nbr];

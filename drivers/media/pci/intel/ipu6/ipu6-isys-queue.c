@@ -579,14 +579,20 @@ static void stop_streaming(struct vb2_queue *q)
 	struct ipu6_isys_queue *aq = vb2_queue_to_isys_queue(q);
 	struct ipu6_isys_video *av = ipu6_isys_queue_to_video(aq);
 	struct ipu6_isys_stream *stream = av->stream;
+	int ret;
 
 	mutex_lock(&stream->mutex);
 
 	ipu6_isys_update_stream_watermark(av, false);
 
 	mutex_lock(&av->isys->stream_mutex);
-	if (stream->nr_streaming == stream->nr_queues && stream->streaming)
-		ipu6_isys_video_set_streaming(av, 0, NULL);
+	if (stream->nr_streaming == stream->nr_queues && stream->streaming) {
+		ret = ipu6_isys_video_set_streaming(av, 0, NULL);
+		if (ret)
+			dev_err(&av->isys->adev->auxdev.dev,
+				"failed to stop pipeline during streamoff: %d\n",
+				ret);
+	}
 	list_del(&aq->node);
 	mutex_unlock(&av->isys->stream_mutex);
 
