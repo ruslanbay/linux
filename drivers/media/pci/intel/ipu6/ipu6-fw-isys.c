@@ -531,19 +531,15 @@ static u32 resp_type_to_index(int type)
 	return  ARRAY_SIZE(fw_msg) - 1;
 }
 
-int ipu6_isys_isr_one(struct ipu6_bus_device *adev)
+void ipu6_isys_handle_response(struct ipu6_bus_device *adev,
+			       struct ipu6_fw_isys_resp_info_abi *resp)
 {
 	struct ipu6_isys *isys = ipu6_bus_get_drvdata(adev);
-	struct ipu6_fw_isys_resp_info_abi *resp;
 	struct ipu6_isys_stream *stream;
 	struct ipu6_isys_csi2 *csi2 = NULL;
 	struct isys_fw_msgs *isys_fw_msg = NULL;
 	u32 index;
 	u64 ts;
-
-	resp = ipu6_fw_isys_get_resp(isys);
-	if (!resp)
-		return 1;
 
 	ts = (u64)resp->timestamp[1] << 32 | resp->timestamp[0];
 
@@ -580,7 +576,8 @@ int ipu6_isys_isr_one(struct ipu6_bus_device *adev)
 	}
 	stream->error = resp->error_info.error;
 
-	csi2 = ipu6_isys_subdev_to_csi2(stream->asd);
+	if (stream->asd)
+		csi2 = ipu6_isys_subdev_to_csi2(stream->asd);
 
 	switch (resp->type) {
 	case IPU6_FW_ISYS_RESP_TYPE_STREAM_OPEN_DONE:
@@ -633,8 +630,8 @@ int ipu6_isys_isr_one(struct ipu6_bus_device *adev)
 	case IPU6_FW_ISYS_RESP_TYPE_STREAM_CAPTURE_DONE:
 		break;
 	case IPU6_FW_ISYS_RESP_TYPE_FRAME_SOF:
-
-		ipu6_isys_csi2_sof_event_by_stream(stream);
+		if (csi2)
+			ipu6_isys_csi2_sof_event_by_stream(stream);
 		stream->seq[stream->seq_index].sequence =
 			atomic_read(&stream->sequence) - 1;
 		stream->seq[stream->seq_index].timestamp = ts;
@@ -646,7 +643,8 @@ int ipu6_isys_isr_one(struct ipu6_bus_device *adev)
 			% IPU6_ISYS_MAX_PARALLEL_SOF;
 		break;
 	case IPU6_FW_ISYS_RESP_TYPE_FRAME_EOF:
-		ipu6_isys_csi2_eof_event_by_stream(stream);
+		if (csi2)
+			ipu6_isys_csi2_eof_event_by_stream(stream);
 		dev_dbg(&adev->auxdev.dev,
 			"eof: handle %d: (index %u), timestamp 0x%16.16llx\n",
 			resp->stream_handle,
@@ -661,7 +659,21 @@ int ipu6_isys_isr_one(struct ipu6_bus_device *adev)
 	}
 
 leave:
+	return;
+}
+
+static int ipu6_isys_isr_one(struct ipu6_bus_device *adev)
+{
+	struct ipu6_isys *isys = ipu6_bus_get_drvdata(adev);
+	struct ipu6_fw_isys_resp_info_abi *resp;
+
+	resp = ipu6_fw_isys_get_resp(isys);
+	if (!resp)
+		return 1;
+
+	ipu6_isys_handle_response(adev, resp);
 	ipu6_fw_isys_put_resp(isys);
+
 	return 0;
 }
 
@@ -742,7 +754,7 @@ irqreturn_t ipu6_isys_isr(struct ipu6_bus_device *adev)
 
 		writel(0, base + IPU6_REG_ISYS_UNISPART_SW_IRQ_REG);
 
-		if (!ipu6_isys_isr_one(adev))
+		if (!adev->auxdrv_data->fw_ops->isr_one(adev))
 			status_sw = IPU6_ISYS_UNISPART_IRQ_SW;
 		else
 			status_sw = 0;
@@ -958,6 +970,7 @@ static void ipu6_fw_isys_prepare_buf_set(struct isys_fw_msgs *msg,
 const struct ipu6_fw_isys_ops ipu6_fw_isys_ops = {
 	.init = ipu6_fw_isys_init,
 	.close = ipu6_fw_isys_close,
+	.isr_one = ipu6_isys_isr_one,
 	.cleanup = ipu6_fw_isys_cleanup,
 	.prepare_stream_cfg = ipu6_fw_isys_prepare_stream_cfg,
 	.prepare_buf_set = ipu6_fw_isys_prepare_buf_set,
