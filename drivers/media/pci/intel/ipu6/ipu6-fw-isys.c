@@ -532,7 +532,8 @@ static u32 resp_type_to_index(int type)
 }
 
 void ipu6_isys_handle_response(struct ipu6_bus_device *adev,
-			       struct ipu6_fw_isys_resp_info_abi *resp)
+			       struct ipu6_fw_isys_resp_info_abi *resp,
+			       bool release_msg_buf)
 {
 	struct ipu6_isys *isys = ipu6_bus_get_drvdata(adev);
 	struct ipu6_isys_stream *stream;
@@ -598,21 +599,31 @@ void ipu6_isys_handle_response(struct ipu6_bus_device *adev,
 	case IPU6_FW_ISYS_RESP_TYPE_STREAM_FLUSH_ACK:
 		complete(&stream->stream_stop_completion);
 		break;
+	case IPU6_FW_ISYS_RESP_TYPE_PIN_DATA_SKIPPED:
+		if (resp->pin_id < IPU6_ISYS_OUTPUT_PINS &&
+		    stream->output_pins_queue[resp->pin_id])
+			ipu6_isys_queue_buf_ready(stream, resp);
+		else
+			dev_warn(&adev->auxdev.dev,
+				 "%d:No queue for skipped pin id %d\n",
+				 resp->stream_handle, resp->pin_id);
+		break;
 	case IPU6_FW_ISYS_RESP_TYPE_PIN_DATA_READY:
 		/*
 		 * firmware only release the capture message until software
 		 * get pin_data_ready event
 		 */
-		if (!resp->buf_id) {
-			dev_warn(&adev->auxdev.dev, "%d: Invalid buf ID\n",
-				 resp->stream_handle);
-			goto leave;
+		if (release_msg_buf) {
+			if (!resp->buf_id) {
+				dev_warn(&adev->auxdev.dev, "%d: Invalid buf ID\n",
+					 resp->stream_handle);
+				goto leave;
+			}
+
+			isys_fw_msg = container_of((void *)(uintptr_t)resp->buf_id,
+						   struct isys_fw_msgs, dummy);
+			ipu6_put_fw_msg_buf(ipu6_bus_get_drvdata(adev), isys_fw_msg);
 		}
-
-		isys_fw_msg = container_of((void *)(uintptr_t)resp->buf_id,
-					   struct isys_fw_msgs, dummy);
-
-		ipu6_put_fw_msg_buf(ipu6_bus_get_drvdata(adev), isys_fw_msg);
 		if (resp->pin_id < IPU6_ISYS_OUTPUT_PINS &&
 		    stream->output_pins_queue[resp->pin_id])
 			ipu6_isys_queue_buf_ready(stream, resp);
@@ -671,7 +682,7 @@ static int ipu6_isys_isr_one(struct ipu6_bus_device *adev)
 	if (!resp)
 		return 1;
 
-	ipu6_isys_handle_response(adev, resp);
+	ipu6_isys_handle_response(adev, resp, true);
 	ipu6_fw_isys_put_resp(isys);
 
 	return 0;

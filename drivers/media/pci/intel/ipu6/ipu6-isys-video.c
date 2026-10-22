@@ -673,14 +673,22 @@ ipu6_isys_alloc_stream_firmware(struct ipu6_isys_csi2 *csi2,
 	struct device *dev = &csi2->isys->adev->auxdev.dev;
 	struct ipu6_isys_stream *stream;
 	struct v4l2_subdev_route *route;
+	unsigned int max_streams;
 	int ret;
 
 	stream = kzalloc_obj(*stream);
 	if (!stream)
 		return ERR_PTR(-ENOMEM);
 
-	ret = ida_alloc_max(&csi2->isys->streams, IPU6_ISYS_MAX_STREAMS - 1,
-			    GFP_KERNEL);
+	max_streams = min_t(unsigned int,
+			    csi2->isys->pdata->ipdata->max_streams,
+			    IPU6_ISYS_MAX_STREAMS);
+	if (!max_streams) {
+		ret = -EINVAL;
+		goto err_free_stream;
+	}
+
+	ret = ida_alloc_max(&csi2->isys->streams, max_streams - 1, GFP_KERNEL);
 	if (ret < 0)
 		goto err_free_stream;
 
