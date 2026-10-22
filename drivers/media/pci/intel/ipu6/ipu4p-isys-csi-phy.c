@@ -53,6 +53,22 @@ static void ipu4p_isys_configure_phy_bb(struct ipu6_device *isp,
 	writel(value, base + IPU4P_BUTTRESS_REG_BBX_AFE_CONFIG(config->bb));
 }
 
+/*
+ * Use fixed timing observed in Windows for IPU4P CSI-2 port 2,
+ * firmware source 7, two-lane D-PHY configuration.
+ */
+static void ipu4p_isys_apply_fixed_2lane_timing(struct ipu6_isys_csi2 *csi2)
+{
+	writel(0, csi2->base + IPU4P_CSI2_RX_DLY_CNT_SETTLE_CLANE);
+	writel(1155, csi2->base + IPU4P_CSI2_RX_DLY_CNT_TERMEN_DLANE(0));
+
+	for (unsigned int i = 0; i < 8; i++) {
+		writel(0, csi2->base + IPU4P_CSI2_RX_DLY_CNT_SETTLE_DLANE(i));
+		writel(1269,
+		       csi2->base + IPU4P_CSI2_RX_DLY_CNT_TERMEN_DLANE(i + 1));
+	}
+}
+
 void ipu4p_isys_phy_setup(struct ipu6_isys *isys)
 {
 	struct ipu6_device *isp = isys->adev->isp;
@@ -120,6 +136,7 @@ int ipu4p_isys_phy_set_power(struct ipu6_isys *isys,
 	struct ipu6_isys_csi2 *csi2;
 	void __iomem *base;
 	u32 value;
+	bool fixed_timing;
 
 	if (!cfg || cfg->port >= isys->pdata->ipdata->csi2.nports)
 		return -EINVAL;
@@ -148,14 +165,29 @@ int ipu4p_isys_phy_set_power(struct ipu6_isys *isys,
 	if (!timing)
 		return -EINVAL;
 
-	writel(timing->ctermen, base + IPU4P_CSI2_RX_DLY_CNT_TERMEN_CLANE);
-	writel(timing->csettle, base + IPU4P_CSI2_RX_DLY_CNT_SETTLE_CLANE);
+	writel(timing->ctermen,
+	       base + IPU4P_CSI2_RX_DLY_CNT_TERMEN_CLANE);
 
-	for (unsigned int lane = 0; lane < cfg->nlanes; lane++) {
-		writel(timing->dtermen,
-		       base + IPU4P_CSI2_RX_DLY_CNT_TERMEN_DLANE(lane));
-		writel(timing->dsettle,
-		       base + IPU4P_CSI2_RX_DLY_CNT_SETTLE_DLANE(lane));
+	fixed_timing = csi2->port == 2 && cfg->nlanes == 2 &&
+		       csi2->asd.source == IPU4P_FW_ISYS_STREAM_SRC_PORT_7;
+	if (fixed_timing) {
+		ipu4p_isys_apply_fixed_2lane_timing(csi2);
+		dev_dbg(&isys->adev->auxdev.dev,
+			"using fixed timing for CSI-2 port %u, source 7, two lanes\n",
+			csi2->port);
+
+		/* Program the lane count before RX_CONFIG for this configuration. */
+		writel(cfg->nlanes, base + IPU4P_CSI2_RX_NOF_ENABLED_LANES);
+	} else {
+		writel(timing->csettle,
+		       base + IPU4P_CSI2_RX_DLY_CNT_SETTLE_CLANE);
+
+		for (unsigned int lane = 0; lane < cfg->nlanes; lane++) {
+			writel(timing->dtermen,
+			       base + IPU4P_CSI2_RX_DLY_CNT_TERMEN_DLANE(lane));
+			writel(timing->dsettle,
+			       base + IPU4P_CSI2_RX_DLY_CNT_SETTLE_DLANE(lane));
+		}
 	}
 
 	value = readl(base + IPU4P_CSI2_RX_CONFIG);
