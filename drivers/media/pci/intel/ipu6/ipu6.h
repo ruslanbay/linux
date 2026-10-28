@@ -15,11 +15,13 @@ struct pci_dev;
 struct ipu6_bus_device;
 
 #define IPU6_NAME			"intel-ipu6"
+#define IPU4P_MEDIA_DEV_MODEL_NAME	"ipu4p"
 #define IPU6_MEDIA_DEV_MODEL_NAME	"ipu6"
 #define IPU7_MEDIA_DEV_MODEL_NAME	"ipu7"
 #define IPU7P5_MEDIA_DEV_MODEL_NAME	"ipu7.5"
 #define IPU8_MEDIA_DEV_MODEL_NAME	"ipu8"
 
+#define IPU4P_FIRMWARE_NAME		"intel/ipu/ipu4p_fw.bin"
 #define IPU6SE_FIRMWARE_NAME		"intel/ipu/ipu6se_fw.bin"
 #define IPU6EP_FIRMWARE_NAME		"intel/ipu/ipu6ep_fw.bin"
 #define IPU6_FIRMWARE_NAME		"intel/ipu/ipu6_fw.bin"

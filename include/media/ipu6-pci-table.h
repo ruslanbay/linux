@@ -8,6 +8,7 @@
 
 #include <linux/pci.h>
 
+#define PCI_DEVICE_ID_INTEL_IPU4P		0x8a19
 #define PCI_DEVICE_ID_INTEL_IPU6		0x9a19
 #define PCI_DEVICE_ID_INTEL_IPU6SE		0x4e19
 #define PCI_DEVICE_ID_INTEL_IPU6EP_ADLP		0x465d
