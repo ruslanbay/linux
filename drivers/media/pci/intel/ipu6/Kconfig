@@ -1,5 +1,5 @@
 config VIDEO_INTEL_IPU6
-	tristate "Intel IPU 6/7/8 driver"
+	tristate "Intel IPU 4P/6/7/8 driver"
 	depends on ACPI || COMPILE_TEST
 	depends on VIDEO_DEV
 	depends on X86 && HAS_DMA
@@ -11,9 +11,9 @@ config VIDEO_INTEL_IPU6
 	select VIDEOBUF2_DMA_SG
 	select V4L2_FWNODE
 	help
-	  This is the driver for 6th, 7th and 8th Gen Intel Image
-	  Processing Units, found in Intel SoCs since Tiger lake and used
-	  for capturing images and video from camera sensors.
+	  This is the driver for Intel IPU4P, IPU6, IPU7 and IPU8 image
+	  processing units, used for capturing images and video from camera
+	  sensors.
 
 	  To compile this driver, say Y here! The two modules will be
 	  called intel_ipu6 and intel_ipu6_isys.
