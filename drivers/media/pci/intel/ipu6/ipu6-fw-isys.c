@@ -599,6 +599,15 @@ void ipu6_isys_handle_response(struct ipu6_bus_device *adev,
 	case IPU6_FW_ISYS_RESP_TYPE_STREAM_FLUSH_ACK:
 		complete(&stream->stream_stop_completion);
 		break;
+	case IPU6_FW_ISYS_RESP_TYPE_PIN_DATA_SKIPPED:
+		if (resp->pin_id < IPU6_ISYS_OUTPUT_PINS &&
+		    stream->output_pins_queue[resp->pin_id])
+			ipu6_isys_queue_buf_ready(stream, resp);
+		else
+			dev_warn(&adev->auxdev.dev,
+				 "%d:No queue for skipped pin id %d\n",
+				 resp->stream_handle, resp->pin_id);
+		break;
 	case IPU6_FW_ISYS_RESP_TYPE_PIN_DATA_READY:
 		/*
 		 * firmware only release the capture message until software
