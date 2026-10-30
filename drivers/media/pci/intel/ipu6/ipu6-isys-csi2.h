@@ -84,5 +84,7 @@ void ipu6_isys_csi2_sof_event_by_stream(struct ipu6_isys_stream *stream);
 void ipu6_isys_csi2_eof_event_by_stream(struct ipu6_isys_stream *stream);
 void ipu6_isys_register_errors(struct ipu6_isys_csi2 *csi2);
 void ipu6_isys_csi2_error(struct ipu6_isys_csi2 *csi2);
+void ipu4p_isys_register_errors(struct ipu6_isys_csi2 *csi2);
+void ipu4p_isys_csi2_isr(struct ipu6_isys_csi2 *csi2);
 
 #endif /* IPU6_ISYS_CSI2_H */
