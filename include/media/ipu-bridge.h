@@ -9,6 +9,7 @@
 #include <media/v4l2-fwnode.h>
 
 #define IPU_HID				"INT343E"
+#define IPU_BRIDGE_PROP_CSI2_SHIFTED_DATA_TICKS	"intel,ipu4p-csi2-shifted-data-ticks"
 #define IPU_MAX_LANES				4
 #define IPU_MAX_PORTS				4
 #define MAX_NUM_LINK_FREQS			3
@@ -180,7 +181,7 @@ struct ipu_sensor {
 	struct ipu_property_names prop_names;
 	struct property_entry ep_properties[IPU_BRIDGE_EP_NUM_ENTRIES];
 	struct property_entry dev_properties[5];
-	struct property_entry ipu_properties[3];
+	struct property_entry ipu_properties[4];
 	struct property_entry ivsc_properties[1];
 	struct property_entry ivsc_sensor_ep_properties[4];
 	struct property_entry ivsc_ipu_ep_properties[4];

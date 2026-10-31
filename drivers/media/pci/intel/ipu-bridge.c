@@ -131,6 +131,37 @@ static const struct ipu_sensor_config ipu_supported_sensors[] = {
 };
 
 /*
+ * The Surface Pro 7 front camera needs shifted CSI-2 data-lane timing
+ * for reliable capture on IPU4P. SSDB link 7 maps to receiver 2.
+ */
+struct ipu4p_csi2_timing_quirk {
+	unsigned int source_port;
+	u32 data_ticks;
+};
+
+static const struct ipu4p_csi2_timing_quirk ipu4p_surface_pro7_timing = {
+	.source_port = 7,
+	/*
+	 * Reverse-engineered from a Windows camera driver:
+	 *     data_ticks = 1360 - 32000 / F_MHz
+	 * At 350 MHz, integer division gives 1269.
+	 */
+	.data_ticks = 1269,
+};
+
+static const struct dmi_system_id ipu4p_csi2_timing_quirks[] = {
+	{
+		.ident = "Microsoft Surface Pro 7",
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "Surface Pro 7"),
+		},
+		.driver_data = (void *)&ipu4p_surface_pro7_timing,
+	},
+	{}
+};
+
+/*
  * DMI matches for laptops which have their sensor mounted upside-down
  * without reporting a rotation of 180° in neither the SSDB nor the _PLD.
  */
@@ -561,6 +592,20 @@ int ipu_bridge_parse_ssdb(struct acpi_device *adev, struct ipu_sensor *sensor)
 }
 EXPORT_SYMBOL_NS_GPL(ipu_bridge_parse_ssdb, "INTEL_IPU_BRIDGE");
 
+static const struct ipu4p_csi2_timing_quirk *
+ipu_bridge_get_csi2_timing_quirk(const struct ipu_sensor *sensor)
+{
+	const struct dmi_system_id *dmi_id;
+	const struct ipu4p_csi2_timing_quirk *quirk;
+
+	dmi_id = dmi_first_match(ipu4p_csi2_timing_quirks);
+	if (!dmi_id)
+		return NULL;
+
+	quirk = dmi_id->driver_data;
+	return sensor->link == quirk->source_port ? quirk : NULL;
+}
+
 static void ipu_bridge_create_fwnode_properties(
 	struct ipu_sensor *sensor,
 	struct ipu_bridge *bridge,
@@ -568,6 +613,7 @@ static void ipu_bridge_create_fwnode_properties(
 {
 	struct ipu_property_names *names = &sensor->prop_names;
 	struct software_node *nodes = sensor->swnodes;
+	const struct ipu4p_csi2_timing_quirk *timing_quirk;
 	unsigned int i = 0;
 
 	sensor->prop_names = prop_names;
@@ -652,6 +698,12 @@ static void ipu_bridge_create_fwnode_properties(
 	sensor->ipu_properties[1] = PROPERTY_ENTRY_REF_ARRAY(
 					sensor->prop_names.remote_endpoint,
 					sensor->remote_ref);
+
+	timing_quirk = ipu_bridge_get_csi2_timing_quirk(sensor);
+	if (timing_quirk)
+		sensor->ipu_properties[2] = PROPERTY_ENTRY_U32(
+				IPU_BRIDGE_PROP_CSI2_SHIFTED_DATA_TICKS,
+				timing_quirk->data_ticks);
 }
 
 static void ipu_bridge_init_swnode_names(struct ipu_sensor *sensor)

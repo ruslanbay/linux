@@ -7,7 +7,10 @@
 #include <linux/dev_printk.h>
 #include <linux/errno.h>
 #include <linux/io.h>
+#include <linux/property.h>
 #include <linux/types.h>
+
+#include <media/ipu-bridge.h>
 
 #include "ipu6.h"
 #include "ipu6-bus.h"
@@ -119,6 +122,7 @@ int ipu4p_isys_phy_set_power(struct ipu6_isys *isys,
 {
 	struct ipu6_isys_csi2 *csi2;
 	void __iomem *base;
+	u32 data_ticks = 0;
 	u32 value;
 
 	if (!cfg || cfg->port >= isys->pdata->ipdata->csi2.nports)
@@ -148,14 +152,43 @@ int ipu4p_isys_phy_set_power(struct ipu6_isys *isys,
 	if (!timing)
 		return -EINVAL;
 
-	writel(timing->ctermen, base + IPU4P_CSI2_RX_DLY_CNT_TERMEN_CLANE);
-	writel(timing->csettle, base + IPU4P_CSI2_RX_DLY_CNT_SETTLE_CLANE);
+	if (cfg->port == 2 && cfg->nlanes == 2) {
+		struct fwnode_handle *ep;
 
-	for (unsigned int lane = 0; lane < cfg->nlanes; lane++) {
-		writel(timing->dtermen,
-		       base + IPU4P_CSI2_RX_DLY_CNT_TERMEN_DLANE(lane));
-		writel(timing->dsettle,
-		       base + IPU4P_CSI2_RX_DLY_CNT_SETTLE_DLANE(lane));
+		/* IPU4P receiver 2 maps to firmware source port 7. */
+		ep = fwnode_graph_get_endpoint_by_id(
+			dev_fwnode(&isys->adev->isp->pdev->dev),
+			IPU4P_FW_ISYS_STREAM_SRC_PORT_7, 0,
+			FWNODE_GRAPH_ENDPOINT_NEXT);
+		if (ep) {
+			fwnode_property_read_u32(
+				ep, IPU_BRIDGE_PROP_CSI2_SHIFTED_DATA_TICKS,
+				&data_ticks);
+			fwnode_handle_put(ep);
+		}
+	}
+
+	if (data_ticks) {
+		for (unsigned int lane = 0; lane < cfg->nlanes; lane++)
+			writel(data_ticks,
+			       base +
+			       IPU4P_CSI2_RX_DLY_CNT_SHIFTED_DATA_TICKS(lane));
+
+		dev_dbg(&isys->adev->auxdev.dev,
+			"using shifted data timing (%u ticks) for CSI-2 port %u\n",
+			data_ticks, cfg->port);
+	} else {
+		writel(timing->ctermen,
+		       base + IPU4P_CSI2_RX_DLY_CNT_TERMEN_CLANE);
+		writel(timing->csettle,
+		       base + IPU4P_CSI2_RX_DLY_CNT_SETTLE_CLANE);
+
+		for (unsigned int lane = 0; lane < cfg->nlanes; lane++) {
+			writel(timing->dtermen,
+			       base + IPU4P_CSI2_RX_DLY_CNT_TERMEN_DLANE(lane));
+			writel(timing->dsettle,
+			       base + IPU4P_CSI2_RX_DLY_CNT_SETTLE_DLANE(lane));
+		}
 	}
 
 	value = readl(base + IPU4P_CSI2_RX_CONFIG);
