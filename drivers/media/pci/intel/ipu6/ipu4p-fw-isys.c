@@ -29,7 +29,7 @@
 #include "ipu4p-isys-csi2-regs.h"
 #include "ipu6-platform-regs.h"
 
-static const char send_msg_types[N_IPU4P_FW_ISYS_SEND_TYPE][32] = {
+static const char send_msg_types[N_IPU6_FW_ISYS_SEND_TYPE][32] = {
 	"STREAM_OPEN",
 	"STREAM_START",
 	"STREAM_START_AND_CAPTURE",
@@ -48,7 +48,7 @@ static int ipu4p_fw_isys_send_cmd(struct ipu6_isys *isys,
 	struct ipu4p_fw_isys_send_token *token;
 	struct device *dev = &isys->adev->auxdev.dev;
 
-	if (send_type >= N_IPU4P_FW_ISYS_SEND_TYPE ||
+	if (send_type >= N_IPU6_FW_ISYS_SEND_TYPE ||
 	    stream_handle >= IPU4P_ISYS_MAX_STREAMS)
 		return -EINVAL;
 
@@ -191,16 +191,16 @@ ipu4p_fw_isys_fwcom_cfg_init(struct ipu6_isys *isys,
 	if (!output_queue_cfg)
 		goto err_free_input_queue_cfg;
 
-	isys_fw_cfg->num_send_queues[IPU4P_FW_ISYS_QUEUE_TYPE_PROXY] =
+	isys_fw_cfg->num_send_queues[IPU6_FW_ISYS_QUEUE_TYPE_PROXY] =
 		IPU4P_N_MAX_PROXY_SEND_QUEUES;
-	isys_fw_cfg->num_send_queues[IPU4P_FW_ISYS_QUEUE_TYPE_DEV] =
+	isys_fw_cfg->num_send_queues[IPU6_FW_ISYS_QUEUE_TYPE_DEV] =
 		IPU4P_N_MAX_DEV_SEND_QUEUES;
-	isys_fw_cfg->num_send_queues[IPU4P_FW_ISYS_QUEUE_TYPE_MSG] =
+	isys_fw_cfg->num_send_queues[IPU6_FW_ISYS_QUEUE_TYPE_MSG] =
 		num_message_queues;
-	isys_fw_cfg->num_recv_queues[IPU4P_FW_ISYS_QUEUE_TYPE_PROXY] =
+	isys_fw_cfg->num_recv_queues[IPU6_FW_ISYS_QUEUE_TYPE_PROXY] =
 		IPU4P_N_MAX_PROXY_RECV_QUEUES;
-	isys_fw_cfg->num_recv_queues[IPU4P_FW_ISYS_QUEUE_TYPE_DEV] = 0;
-	isys_fw_cfg->num_recv_queues[IPU4P_FW_ISYS_QUEUE_TYPE_MSG] =
+	isys_fw_cfg->num_recv_queues[IPU6_FW_ISYS_QUEUE_TYPE_DEV] = 0;
+	isys_fw_cfg->num_recv_queues[IPU6_FW_ISYS_QUEUE_TYPE_MSG] =
 		IPU4P_N_MAX_RECV_QUEUES - IPU4P_N_MAX_PROXY_RECV_QUEUES;
 
 	/*
@@ -245,13 +245,13 @@ ipu4p_fw_isys_fwcom_cfg_init(struct ipu6_isys *isys,
 		IPU4P_ISYS_SIZE_RECV_QUEUE;
 
 	fwcom_cfg->num_input_queues =
-		isys_fw_cfg->num_send_queues[IPU4P_FW_ISYS_QUEUE_TYPE_PROXY] +
-		isys_fw_cfg->num_send_queues[IPU4P_FW_ISYS_QUEUE_TYPE_DEV] +
-		isys_fw_cfg->num_send_queues[IPU4P_FW_ISYS_QUEUE_TYPE_MSG];
+		isys_fw_cfg->num_send_queues[IPU6_FW_ISYS_QUEUE_TYPE_PROXY] +
+		isys_fw_cfg->num_send_queues[IPU6_FW_ISYS_QUEUE_TYPE_DEV] +
+		isys_fw_cfg->num_send_queues[IPU6_FW_ISYS_QUEUE_TYPE_MSG];
 	fwcom_cfg->num_output_queues =
-		isys_fw_cfg->num_recv_queues[IPU4P_FW_ISYS_QUEUE_TYPE_PROXY] +
-		isys_fw_cfg->num_recv_queues[IPU4P_FW_ISYS_QUEUE_TYPE_DEV] +
-		isys_fw_cfg->num_recv_queues[IPU4P_FW_ISYS_QUEUE_TYPE_MSG];
+		isys_fw_cfg->num_recv_queues[IPU6_FW_ISYS_QUEUE_TYPE_PROXY] +
+		isys_fw_cfg->num_recv_queues[IPU6_FW_ISYS_QUEUE_TYPE_DEV] +
+		isys_fw_cfg->num_recv_queues[IPU6_FW_ISYS_QUEUE_TYPE_MSG];
 	fwcom_cfg->input = input_queue_cfg;
 	fwcom_cfg->output = output_queue_cfg;
 	fwcom_cfg->dmem_addr = isys->pdata->ipdata->hw_variant.dmem_offset;
@@ -362,47 +362,6 @@ ipu4p_fw_isys_dump_frame_buf_set(struct device *dev,
 
 		dev_dbg(dev, "output pin %u: buffer ID 0x%llx, address 0x%x\n",
 			i, (unsigned long long)pin->out_buf_id, pin->addr);
-	}
-}
-
-static int ipu4p_fw_isys_resp_type_to_ipu6(unsigned int type)
-{
-	switch (type) {
-	case IPU4P_FW_ISYS_RESP_TYPE_STREAM_OPEN_DONE:
-		return IPU6_FW_ISYS_RESP_TYPE_STREAM_OPEN_DONE;
-	case IPU4P_FW_ISYS_RESP_TYPE_STREAM_START_ACK:
-		return IPU6_FW_ISYS_RESP_TYPE_STREAM_START_ACK;
-	case IPU4P_FW_ISYS_RESP_TYPE_STREAM_START_AND_CAPTURE_ACK:
-		return IPU6_FW_ISYS_RESP_TYPE_STREAM_START_AND_CAPTURE_ACK;
-	case IPU4P_FW_ISYS_RESP_TYPE_STREAM_CAPTURE_ACK:
-		return IPU6_FW_ISYS_RESP_TYPE_STREAM_CAPTURE_ACK;
-	case IPU4P_FW_ISYS_RESP_TYPE_STREAM_STOP_ACK:
-		return IPU6_FW_ISYS_RESP_TYPE_STREAM_STOP_ACK;
-	case IPU4P_FW_ISYS_RESP_TYPE_STREAM_FLUSH_ACK:
-		return IPU6_FW_ISYS_RESP_TYPE_STREAM_FLUSH_ACK;
-	case IPU4P_FW_ISYS_RESP_TYPE_STREAM_CLOSE_ACK:
-		return IPU6_FW_ISYS_RESP_TYPE_STREAM_CLOSE_ACK;
-	case IPU4P_FW_ISYS_RESP_TYPE_PIN_DATA_READY:
-		return IPU6_FW_ISYS_RESP_TYPE_PIN_DATA_READY;
-	case IPU4P_FW_ISYS_RESP_TYPE_FRAME_SOF:
-		return IPU6_FW_ISYS_RESP_TYPE_FRAME_SOF;
-	case IPU4P_FW_ISYS_RESP_TYPE_FRAME_EOF:
-		return IPU6_FW_ISYS_RESP_TYPE_FRAME_EOF;
-	case IPU4P_FW_ISYS_RESP_TYPE_STREAM_START_AND_CAPTURE_DONE:
-		return IPU6_FW_ISYS_RESP_TYPE_STREAM_START_AND_CAPTURE_DONE;
-	case IPU4P_FW_ISYS_RESP_TYPE_STREAM_CAPTURE_DONE:
-		return IPU6_FW_ISYS_RESP_TYPE_STREAM_CAPTURE_DONE;
-	case IPU4P_FW_ISYS_RESP_TYPE_PIN_DATA_SKIPPED:
-		return IPU6_FW_ISYS_RESP_TYPE_PIN_DATA_SKIPPED;
-	case IPU4P_FW_ISYS_RESP_TYPE_STATS_DATA_READY:
-		return IPU6_FW_ISYS_RESP_TYPE_STATS_DATA_READY;
-	case IPU4P_FW_ISYS_RESP_TYPE_PIN_DATA_WATERMARK:
-	case IPU4P_FW_ISYS_RESP_TYPE_STREAM_CAPTURE_SKIPPED:
-	case IPU4P_FW_ISYS_RESP_TYPE_FRAME_SOF_DISCARDED:
-	case IPU4P_FW_ISYS_RESP_TYPE_FRAME_EOF_DISCARDED:
-		return -EOPNOTSUPP;
-	default:
-		return -EINVAL;
 	}
 }
 
@@ -554,7 +513,6 @@ static int ipu4p_fw_isys_isr_one(struct ipu6_bus_device *adev)
 	struct ipu4p_fw_isys_recv_token *token;
 	struct ipu4p_fw_isys_resp_info *fw_resp;
 	struct ipu6_fw_isys_resp_info_abi resp = {};
-	int type;
 
 	if (!isys->fwctx)
 		return 1;
@@ -564,14 +522,14 @@ static int ipu4p_fw_isys_isr_one(struct ipu6_bus_device *adev)
 		return 1;
 
 	fw_resp = &token->resp_info;
-	if (fw_resp->type >= N_IPU4P_FW_ISYS_RESP_TYPE) {
+	if (fw_resp->type >= N_IPU6_FW_ISYS_RESP_TYPE) {
 		dev_err(dev, "Unknown IPU4P response type %u stream %u\n",
 			fw_resp->type, fw_resp->stream_handle);
 		goto out;
 	}
 
 	switch (fw_resp->type) {
-	case IPU4P_FW_ISYS_RESP_TYPE_STREAM_CAPTURE_SKIPPED: {
+	case IPU6_FW_ISYS_RESP_TYPE_STREAM_CAPTURE_SKIPPED: {
 		u32 addrs[IPU4P_MAX_OPINS] = {};
 		u8 pending_pin_mask;
 		unsigned int i;
@@ -601,20 +559,20 @@ static int ipu4p_fw_isys_isr_one(struct ipu6_bus_device *adev)
 		}
 		goto out;
 	}
-	case IPU4P_FW_ISYS_RESP_TYPE_PIN_DATA_SKIPPED:
+	case IPU6_FW_ISYS_RESP_TYPE_PIN_DATA_SKIPPED:
 		if (!ipu4p_fw_isys_complete_pin_response(isys, fw_resp)) {
 			dev_dbg(dev, "No in-flight pin set for stream %u frame %u\n",
 				fw_resp->stream_handle, fw_resp->frame_counter);
 			goto out;
 		}
 		break;
-	case IPU4P_FW_ISYS_RESP_TYPE_FRAME_SOF_DISCARDED:
-	case IPU4P_FW_ISYS_RESP_TYPE_FRAME_EOF_DISCARDED:
-	case IPU4P_FW_ISYS_RESP_TYPE_PIN_DATA_WATERMARK:
+	case IPU6_FW_ISYS_RESP_TYPE_FRAME_SOF_DISCARDED:
+	case IPU6_FW_ISYS_RESP_TYPE_FRAME_EOF_DISCARDED:
+	case IPU6_FW_ISYS_RESP_TYPE_PIN_DATA_WATERMARK:
 		dev_dbg(dev, "Ignoring IPU4P response type %u for stream %u\n",
 			fw_resp->type, fw_resp->stream_handle);
 		goto out;
-	case IPU4P_FW_ISYS_RESP_TYPE_PIN_DATA_READY:
+	case IPU6_FW_ISYS_RESP_TYPE_PIN_DATA_READY:
 		if (!ipu4p_fw_isys_complete_pin_response(isys, fw_resp)) {
 			dev_warn(dev,
 				 "Unmatched IPU4P pin response for stream %u frame %u\n",
@@ -626,17 +584,6 @@ static int ipu4p_fw_isys_isr_one(struct ipu6_bus_device *adev)
 		break;
 	}
 
-	type = ipu4p_fw_isys_resp_type_to_ipu6(fw_resp->type);
-	if (type < 0) {
-		if (type == -EINVAL)
-			dev_err(dev, "Unknown IPU4P response type %u\n",
-				fw_resp->type);
-		else
-			dev_dbg(dev, "Ignoring unsupported IPU4P response type %u\n",
-				fw_resp->type);
-		goto out;
-	}
-
 	resp.buf_id = fw_resp->buf_id;
 	resp.pin.out_buf_id = fw_resp->pin.out_buf_id;
 	resp.pin.addr = fw_resp->pin.addr;
@@ -646,7 +593,7 @@ static int ipu4p_fw_isys_isr_one(struct ipu6_bus_device *adev)
 	resp.timestamp[0] = fw_resp->timestamp[0];
 	resp.timestamp[1] = fw_resp->timestamp[1];
 	resp.stream_handle = fw_resp->stream_handle;
-	resp.type = type;
+	resp.type = fw_resp->type;
 	resp.pin_id = fw_resp->pin_id;
 
 	/* IPU4P manages message-buffer ownership separately. */
@@ -694,10 +641,10 @@ static int ipu4p_fw_isys_pin_cfg(struct ipu6_isys_video *av,
 	input_pin->input_res.height = fmt->height;
 	input_pin->dt = entry->bus.csi2.dt;
 	input_pin->bits_per_pix = pfmt->bpp_packed;
-	input_pin->mapped_dt = N_IPU4P_FW_ISYS_MIPI_DATA_TYPE;
+	input_pin->mapped_dt = 0x40; /* invalid mipi data type */
 	input_pin->mipi_store_mode = pfmt->bpp == pfmt->bpp_packed ?
-		IPU4P_FW_ISYS_MIPI_STORE_MODE_DISCARD_LONG_HEADER :
-		IPU4P_FW_ISYS_MIPI_STORE_MODE_NORMAL;
+		IPU6_FW_ISYS_MIPI_STORE_MODE_DISCARD_LONG_HEADER :
+		IPU6_FW_ISYS_MIPI_STORE_MODE_NORMAL;
 
 	output_pins = cfg->nof_output_pins++;
 	aq->fw_output = output_pins;
@@ -710,7 +657,7 @@ static int ipu4p_fw_isys_pin_cfg(struct ipu6_isys_video *av,
 	output_pin->stride = ipu6_isys_get_bytes_per_line(av);
 	output_pin->payload_buf_size = 0;
 	output_pin->pt = pfmt->bpp == pfmt->bpp_packed ?
-		IPU4P_FW_ISYS_PIN_TYPE_MIPI : IPU4P_FW_ISYS_PIN_TYPE_RAW_SOC;
+		IPU6_FW_ISYS_PIN_TYPE_MIPI : IPU6_FW_ISYS_PIN_TYPE_RAW_SOC;
 	output_pin->ft = pfmt->css_pixelformat;
 	output_pin->send_irq = 1;
 	output_pin->link_id = IPU4P_FW_ISYS_LINK_OFFLINE;
@@ -755,21 +702,21 @@ static int ipu4p_fw_isys_stream_open(struct ipu6_isys *isys,
 	return ipu4p_fw_isys_send_cmd(isys, stream_handle,
 				      &msg->ipu4p.stream, msg->dma_addr,
 				      sizeof(msg->ipu4p.stream),
-				      IPU4P_FW_ISYS_SEND_TYPE_STREAM_OPEN);
+				      IPU6_FW_ISYS_SEND_TYPE_STREAM_OPEN);
 }
 
 static int ipu4p_fw_isys_stream_close(struct ipu6_isys *isys,
 				      const unsigned int stream_handle)
 {
 	return ipu4p_fw_isys_send_cmd(isys, stream_handle, NULL, 0, 0,
-				      IPU4P_FW_ISYS_SEND_TYPE_STREAM_CLOSE);
+				      IPU6_FW_ISYS_SEND_TYPE_STREAM_CLOSE);
 }
 
 static int ipu4p_fw_isys_stream_flush(struct ipu6_isys *isys,
 				      const unsigned int stream_handle)
 {
 	return ipu4p_fw_isys_send_cmd(isys, stream_handle, NULL, 0, 0,
-				      IPU4P_FW_ISYS_SEND_TYPE_STREAM_FLUSH);
+				      IPU6_FW_ISYS_SEND_TYPE_STREAM_FLUSH);
 }
 
 static int
@@ -791,10 +738,10 @@ static int ipu4p_fw_isys_stream_start(struct ipu6_isys *isys,
 {
 	if (!capture)
 		return ipu4p_fw_isys_send_cmd(isys, stream_handle, NULL, 0, 0,
-					      IPU4P_FW_ISYS_SEND_TYPE_STREAM_START);
+					      IPU6_FW_ISYS_SEND_TYPE_STREAM_START);
 
 	return ipu4p_fw_isys_send_frame_buff_set(isys, stream_handle, msg,
-						 IPU4P_FW_ISYS_SEND_TYPE_STREAM_START_AND_CAPTURE);
+						 IPU6_FW_ISYS_SEND_TYPE_STREAM_START_AND_CAPTURE);
 }
 
 static int ipu4p_fw_isys_stream_capture(struct ipu6_isys *isys,
@@ -802,7 +749,7 @@ static int ipu4p_fw_isys_stream_capture(struct ipu6_isys *isys,
 					struct isys_fw_msgs *msg)
 {
 	return ipu4p_fw_isys_send_frame_buff_set(isys, stream_handle, msg,
-						 IPU4P_FW_ISYS_SEND_TYPE_STREAM_CAPTURE);
+						 IPU6_FW_ISYS_SEND_TYPE_STREAM_CAPTURE);
 }
 
 static bool
