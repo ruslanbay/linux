@@ -16,6 +16,7 @@
 	interrupt-parent = <&gic>;
 
 	aliases {
+		serial0 = &serial_0;
 		pinctrl0 = &pinctrl_alive;
 		pinctrl1 = &pinctrl_aud;
 		pinctrl2 = &pinctrl_chub;
@@ -188,6 +189,25 @@
 			interrupts = <GIC_PPI 9 (GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_HIGH)>;
 			#address-cells = <0>;
 			#size-cells = <1>;
+		};
+
+		/*
+		 * Exynos9810 debug UART0 candidate (reference: SM-N770F/R7
+		 * downstream DTB). Confirm the address, IRQ and FIFO size
+		 * against the Galaxy S9 downstream DTB before treating these
+		 * values as board-verified.
+		 *
+		 * Keep the normal UART device disabled until the Exynos9810
+		 * CMU clocks and S9 pin routing are described. OF earlycon
+		 * still consumes this node through /chosen/stdout-path before
+		 * platform-device status is considered.
+		 */
+		serial_0: serial@10440000 {
+			compatible = "samsung,exynos9810-uart";
+			reg = <0x10440000 0x100>;
+			interrupts = <GIC_SPI 397 IRQ_TYPE_LEVEL_HIGH>;
+			samsung,uart-fifosize = <256>;
+			status = "disabled";
 		};
 
 		pinctrl_peric0: pinctrl@10430000 {

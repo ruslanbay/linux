@@ -17,6 +17,7 @@
 	chassis-type = "handset";
 
 	chosen {
+		stdout-path = "serial0:115200n8";
 		#address-cells = <2>;
 		#size-cells = <1>;
 		ranges;

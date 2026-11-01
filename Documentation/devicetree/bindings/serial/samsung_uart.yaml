@@ -28,6 +28,7 @@ properties:
           - samsung,exynos5433-uart
           - samsung,exynos850-uart
           - samsung,exynos8895-uart
+          - samsung,exynos9810-uart
       - items:
           - enum:
               - samsung,exynos2200-uart
@@ -55,6 +56,9 @@ properties:
 
   reg:
     maxItems: 1
+
+  status:
+    $ref: /schemas/types.yaml#/definitions/string
 
   reg-io-width:
     description: |
@@ -95,13 +99,30 @@ properties:
 
 required:
   - compatible
-  - clocks
-  - clock-names
   - interrupts
   - reg
 
 allOf:
   - $ref: serial.yaml#
+
+  # The Exynos9810 UART may be described for earlycon before the CMU
+  # clock provider is available. Keep the Linux device disabled until
+  # its real clocks are described; earlycon still reads stdout-path.
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: samsung,exynos9810-uart
+        status:
+          const: disabled
+      required:
+        - compatible
+        - status
+    then: {}
+    else:
+      required:
+        - clocks
+        - clock-names
 
   - if:
       properties:
@@ -172,6 +193,7 @@ allOf:
             enum:
               - google,gs101-uart
               - samsung,exynos8895-uart
+              - samsung,exynos9810-uart
     then:
       required:
         - samsung,uart-fifosize
