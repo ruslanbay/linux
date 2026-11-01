@@ -173,12 +173,14 @@ struct isys_fw_msgs {
 	};
 	struct list_head head;
 	dma_addr_t dma_addr;
-	u8 ipu4p_stream_handle;
-	u8 ipu4p_frame_counter;
-	/* Bits mark output pins with buffers awaiting firmware completion. */
-	u8 ipu4p_pending_pin_mask;
-	bool ipu4p_is_frame;
-	bool ipu4p_addr_error;
+	struct {
+		u8 stream_handle;
+		u8 frame_counter;
+		/* Bits mark output pins with buffers awaiting firmware completion. */
+		u8 pending_pin_mask;
+		bool is_frame;
+		bool addr_error;
+	} ipu4p_track;
 };
 
 enum ipu6_isys_iwake_register {

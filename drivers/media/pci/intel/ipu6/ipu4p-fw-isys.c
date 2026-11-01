@@ -388,15 +388,15 @@ ipu4p_fw_isys_complete_pin_response(struct ipu6_isys *isys,
 	pin_mask = BIT(resp->pin_id);
 	spin_lock_irqsave(&isys->listlock, flags);
 	list_for_each_entry(msg, &isys->framebuflist_fw, head) {
-		if (!msg->ipu4p_is_frame ||
-		    msg->ipu4p_stream_handle != resp->stream_handle ||
-		    msg->ipu4p_frame_counter != resp->frame_counter)
+		if (!msg->ipu4p_track.is_frame ||
+		    msg->ipu4p_track.stream_handle != resp->stream_handle ||
+		    msg->ipu4p_track.frame_counter != resp->frame_counter)
 			continue;
-		if (!(msg->ipu4p_pending_pin_mask & pin_mask))
+		if (!(msg->ipu4p_track.pending_pin_mask & pin_mask))
 			break;
 
-		msg->ipu4p_pending_pin_mask &= ~pin_mask;
-		if (!msg->ipu4p_pending_pin_mask)
+		msg->ipu4p_track.pending_pin_mask &= ~pin_mask;
+		if (!msg->ipu4p_track.pending_pin_mask)
 			list_move(&msg->head, &isys->framebuflist);
 		found = true;
 		break;
@@ -425,18 +425,18 @@ ipu4p_fw_isys_complete_skipped_frame(struct ipu6_isys *isys,
 	*pending_pin_mask = 0;
 	spin_lock_irqsave(&isys->listlock, flags);
 	list_for_each_entry(msg, &isys->framebuflist_fw, head) {
-		if (!msg->ipu4p_is_frame ||
-		    msg->ipu4p_stream_handle != stream_handle ||
-		    msg->ipu4p_frame_counter != frame_counter)
+		if (!msg->ipu4p_track.is_frame ||
+		    msg->ipu4p_track.stream_handle != stream_handle ||
+		    msg->ipu4p_track.frame_counter != frame_counter)
 			continue;
 
-		*pending_pin_mask = msg->ipu4p_pending_pin_mask;
+		*pending_pin_mask = msg->ipu4p_track.pending_pin_mask;
 		for (i = 0; i < IPU4P_MAX_OPINS; i++) {
 			if (*pending_pin_mask & BIT(i))
 				addrs[i] = msg->ipu4p.frame.output_pins[i].addr;
 		}
 
-		msg->ipu4p_pending_pin_mask = 0;
+		msg->ipu4p_track.pending_pin_mask = 0;
 		list_move(&msg->head, &isys->framebuflist);
 		found = true;
 		break;
@@ -675,11 +675,11 @@ ipu4p_fw_isys_prepare_stream_cfg(struct ipu6_isys_stream *stream,
 	int ret;
 
 	memset(cfg, 0, sizeof(*cfg));
-	msg->ipu4p_stream_handle = stream->stream_handle;
-	msg->ipu4p_frame_counter = 0;
-	msg->ipu4p_pending_pin_mask = 0;
-	msg->ipu4p_is_frame = false;
-	msg->ipu4p_addr_error = false;
+	msg->ipu4p_track.stream_handle = stream->stream_handle;
+	msg->ipu4p_track.frame_counter = 0;
+	msg->ipu4p_track.pending_pin_mask = 0;
+	msg->ipu4p_track.is_frame = false;
+	msg->ipu4p_track.addr_error = false;
 	cfg->src = stream->asd->source;
 	cfg->vc = stream->vc;
 	cfg->isl_use = IPU4P_FW_ISYS_USE_NO_ISL_NO_ISA;
@@ -724,7 +724,7 @@ ipu4p_fw_isys_send_frame_buff_set(struct ipu6_isys *isys,
 				  const unsigned int stream_handle,
 				  struct isys_fw_msgs *msg, u16 send_type)
 {
-	if (msg->ipu4p_addr_error)
+	if (msg->ipu4p_track.addr_error)
 		return -ERANGE;
 
 	return ipu4p_fw_isys_send_cmd(isys, stream_handle,
@@ -795,11 +795,11 @@ ipu4p_fw_isys_prepare_buf_set(struct isys_fw_msgs *msg,
 
 	memset(set, 0, sizeof(*set));
 	set->frame_counter = atomic_fetch_inc(&stream->buf_id) % 256;
-	msg->ipu4p_stream_handle = stream->stream_handle;
-	msg->ipu4p_frame_counter = set->frame_counter;
-	msg->ipu4p_pending_pin_mask = 0;
-	msg->ipu4p_is_frame = true;
-	msg->ipu4p_addr_error = false;
+	msg->ipu4p_track.stream_handle = stream->stream_handle;
+	msg->ipu4p_track.frame_counter = set->frame_counter;
+	msg->ipu4p_track.pending_pin_mask = 0;
+	msg->ipu4p_track.is_frame = true;
+	msg->ipu4p_track.addr_error = false;
 	set->send_irq_sof = 1;
 	set->send_irq_eof = 1;
 	set->send_irq_capture_ack = 1;
@@ -813,9 +813,9 @@ ipu4p_fw_isys_prepare_buf_set(struct isys_fw_msgs *msg,
 			vb2_queue_to_isys_queue(vb->vb2_queue);
 
 		if (ipu4p_fw_isys_buf_to_frame_buf_pin(vb, set))
-			msg->ipu4p_pending_pin_mask |= BIT(aq->fw_output);
+			msg->ipu4p_track.pending_pin_mask |= BIT(aq->fw_output);
 		else
-			msg->ipu4p_addr_error = true;
+			msg->ipu4p_track.addr_error = true;
 	}
 }
 
