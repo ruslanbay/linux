@@ -4,7 +4,7 @@
 #include <linux/array_size.h>
 #include <linux/bitfield.h>
 #include <linux/bits.h>
-#include <linux/dev_printk.h>
+#include <linux/device.h>
 #include <linux/dmi.h>
 #include <linux/errno.h>
 #include <linux/io.h>
@@ -16,6 +16,13 @@
 #include "ipu6-platform-buttress-regs.h"
 #include "ipu4p-isys-csi2-regs.h"
 
+/**
+ * struct ipu4p_phy_bb_config - CSI-2 PHY building block configuration
+ * @bb: Building block index
+ * @crc: C-PHY DLL override code
+ * @drc: D-PHY DLL override code
+ * @afe: Analog Front-End (AFE) configuration
+ */
 struct ipu4p_phy_bb_config {
 	u8 bb;
 	u8 crc;
@@ -23,6 +30,7 @@ struct ipu4p_phy_bb_config {
 	u8 afe;
 };
 
+/* Hardware default port configuration written to ISYS GP and COMBO GP registers */
 #define IPU4P_CSI2_GPREG_CR_PORT_CONFIG_DEFAULT	0x3895
 #define IPU4P_CSI_BSCAN_EXCLUDE			(BIT(9) | BIT(18) | BIT(27))
 
@@ -88,6 +96,7 @@ void ipu4p_isys_phy_setup(struct ipu6_isys *isys)
 {
 	struct ipu6_device *isp = isys->adev->isp;
 	void __iomem *isys_base = isys->pdata->base;
+	unsigned int i;
 
 	writel(IPU4P_CSI2_GPREG_CR_PORT_CONFIG_DEFAULT,
 	       isys_base + IPU4P_ISYS_GPOFFSET +
@@ -98,7 +107,7 @@ void ipu4p_isys_phy_setup(struct ipu6_isys *isys)
 	writel(IPU4P_CSI_BSCAN_EXCLUDE,
 	       isp->base + IPU4P_BUTTRESS_REG_CSI_BSCAN_EXCLUDE);
 
-	for (unsigned int i = 0; i < ARRAY_SIZE(ipu4p_phy_bb_configs); i++)
+	for (i = 0; i < ARRAY_SIZE(ipu4p_phy_bb_configs); i++)
 		ipu4p_isys_configure_phy_bb(isp, &ipu4p_phy_bb_configs[i]);
 }
 
@@ -152,6 +161,7 @@ int ipu4p_isys_phy_set_power(struct ipu6_isys *isys,
 	const struct dmi_system_id *dmi_id;
 	const struct ipu4p_csi2_timing_quirk *quirk;
 	void __iomem *base;
+	unsigned int lane;
 	u32 value;
 
 	if (!cfg || cfg->port >= isys->pdata->ipdata->csi2.nports)
@@ -159,6 +169,8 @@ int ipu4p_isys_phy_set_power(struct ipu6_isys *isys,
 
 	csi2 = &isys->csi2[cfg->port];
 	base = csi2->base;
+	if (!base)
+		return -EINVAL;
 
 	if (!on) {
 		value = readl(base + IPU4P_CSI2_RX_CONFIG);
@@ -186,7 +198,7 @@ int ipu4p_isys_phy_set_power(struct ipu6_isys *isys,
 
 	if (quirk && cfg->port == quirk->port &&
 	    cfg->nlanes == quirk->nlanes) {
-		for (unsigned int lane = 0; lane < cfg->nlanes; lane++)
+		for (lane = 0; lane < cfg->nlanes; lane++)
 			writel(quirk->data_ticks,
 			       base +
 			       IPU4P_CSI2_RX_DLY_CNT_SHIFTED_DATA_TICKS(lane));
@@ -200,7 +212,7 @@ int ipu4p_isys_phy_set_power(struct ipu6_isys *isys,
 		writel(timing->csettle,
 		       base + IPU4P_CSI2_RX_DLY_CNT_SETTLE_CLANE);
 
-		for (unsigned int lane = 0; lane < cfg->nlanes; lane++) {
+		for (lane = 0; lane < cfg->nlanes; lane++) {
 			writel(timing->dtermen,
 			       base + IPU4P_CSI2_RX_DLY_CNT_TERMEN_DLANE(lane));
 			writel(timing->dsettle,
