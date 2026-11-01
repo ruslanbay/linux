@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (C) 2026 Intel Corporation */
 #ifndef IPU4P_ISYS_CSI2_REGS_H
 #define IPU4P_ISYS_CSI2_REGS_H
 
@@ -37,7 +38,7 @@ static inline u32 ipu4p_isys_csi_irq_ctrl_base(unsigned int port)
 
 static inline u32 ipu4p_isys_csi_irq_ctrl0_base(unsigned int port)
 {
-	return port ? (0x6cc00 + 0x800 * (port - 1)) : 0x66400;
+	return ipu4p_isys_csi_irq_ctrl_base(port) + 0x100;
 }
 
 #define IPU4P_ISYS_CSI_IRQ_STATUS_OFFSET		0x08
@@ -63,7 +64,13 @@ static inline u32 ipu4p_isys_csi_irq_ctrl0_base(unsigned int port)
 #define IPU4P_CSI2_RX_DLY_CNT_TERMEN_DLANE(lane)	(0x34 + (lane) * 8)
 #define IPU4P_CSI2_RX_DLY_CNT_SETTLE_DLANE(lane)	(0x38 + (lane) * 8)
 
-/* Shifted CSI-2 data-lane timing register offsets. */
+/*
+ * Shifted CSI-2 data-lane timing register offsets.
+ * On Surface Pro 7 (front camera OV5693), data lines are physically routed
+ * to CSI-2 receiver lanes 1 and 2 rather than 0 and 1. The delay counter
+ * registers for these shifted lanes start at offset 0x3c (which corresponds
+ * to IPU4P_CSI2_RX_DLY_CNT_TERMEN_DLANE(lane + 1)).
+ */
 #define IPU4P_CSI2_RX_DLY_CNT_SHIFTED_DATA_TICKS(lane)	(0x3c + (lane) * 8)
 
 /* CSI receiver general-purpose registers */
