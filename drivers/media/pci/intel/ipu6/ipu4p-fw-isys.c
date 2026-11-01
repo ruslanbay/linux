@@ -366,10 +366,9 @@ ipu4p_fw_isys_dump_frame_buf_set(struct device *dev,
 }
 
 /*
- * Resolve each pin response by stream, frame counter and echoed handle when
- * present. Clear each output-pin bit exactly once so duplicate responses
- * cannot release a frame message before all buffers have completed. Never
- * dereference a firmware-provided value as a pointer.
+ * Resolve each pin response by stream and frame counter. Clear each
+ * output-pin bit exactly once so duplicate responses cannot release
+ * a frame message before all buffers have completed.
  */
 static bool
 ipu4p_fw_isys_complete_pin_response(struct ipu6_isys *isys,
@@ -377,7 +376,6 @@ ipu4p_fw_isys_complete_pin_response(struct ipu6_isys *isys,
 {
 	struct isys_fw_msgs *msg;
 	unsigned long flags;
-	u64 handle = resp->pin.out_buf_id;
 	u8 pin_mask;
 	bool found = false;
 
@@ -389,8 +387,7 @@ ipu4p_fw_isys_complete_pin_response(struct ipu6_isys *isys,
 	list_for_each_entry(msg, &isys->framebuflist_fw, head) {
 		if (!msg->ipu4p_is_frame ||
 		    msg->ipu4p_stream_handle != resp->stream_handle ||
-		    msg->ipu4p_frame_counter != resp->frame_counter ||
-		    (handle && handle != (u64)(uintptr_t)&msg->ipu4p.frame))
+		    msg->ipu4p_frame_counter != resp->frame_counter)
 			continue;
 		if (!(msg->ipu4p_pending_pin_mask & pin_mask))
 			break;
@@ -768,8 +765,7 @@ ipu4p_fw_isys_buf_to_frame_buf_pin(struct vb2_buffer *vb,
 
 	pin = &set->output_pins[aq->fw_output];
 	pin->addr = lower_32_bits(ivb->dma_addr);
-	/* Firmware echoes this opaque handle in PIN_DATA_READY. */
-	pin->out_buf_id = (u64)(uintptr_t)set;
+	pin->out_buf_id = vb->index + 1;
 
 	return true;
 }
