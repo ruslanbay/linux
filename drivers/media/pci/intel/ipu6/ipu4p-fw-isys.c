@@ -52,8 +52,11 @@ static int ipu4p_fw_isys_send_cmd(struct ipu6_isys *isys,
 	    stream_handle >= IPU4P_ISYS_MAX_STREAMS)
 		return -EINVAL;
 
-	if (upper_32_bits(dma_mapped_buf))
+	if (upper_32_bits(dma_mapped_buf)) {
+		dev_err(dev, "DMA buffer address %pad exceeds 32-bit limit\n",
+			&dma_mapped_buf);
 		return -ERANGE;
+	}
 
 	dev_dbg(dev, "send_token: %s\n", send_msg_types[send_type]);
 
@@ -737,6 +740,10 @@ static int ipu4p_fw_isys_stream_start(struct ipu6_isys *isys,
 		return ipu4p_fw_isys_send_cmd(isys, stream_handle, NULL, 0, 0,
 					      IPU6_FW_ISYS_SEND_TYPE_STREAM_START);
 
+	/*
+	 * For start-and-capture, IPU4P firmware requires the frame buffer
+	 * set payload rather than the stream configuration.
+	 */
 	return ipu4p_fw_isys_send_frame_buff_set(isys, stream_handle, msg,
 						 IPU6_FW_ISYS_SEND_TYPE_STREAM_START_AND_CAPTURE);
 }
@@ -759,9 +766,15 @@ ipu4p_fw_isys_buf_to_frame_buf_pin(struct vb2_buffer *vb,
 		vb2_buffer_to_ipu6_isys_video_buffer(vvb);
 	struct ipu4p_fw_isys_output_pin_payload *pin;
 
-	if (aq->fw_output >= IPU4P_MAX_OPINS ||
-	    upper_32_bits(ivb->dma_addr))
+	if (aq->fw_output >= IPU4P_MAX_OPINS)
 		return false;
+
+	if (upper_32_bits(ivb->dma_addr)) {
+		dev_err_once(&aq->isys->adev->auxdev.dev,
+			     "DMA buffer address %pad exceeds 32-bit limit\n",
+			     &ivb->dma_addr);
+		return false;
+	}
 
 	pin = &set->output_pins[aq->fw_output];
 	pin->addr = lower_32_bits(ivb->dma_addr);
